@@ -1,0 +1,12 @@
+<RCC>
+    <qresource prefix="/home/pi/Desktop/qt_projects/Tach_Coffe_Snack/Icon">
+        <file>Icon/Bottle_of_Water_icon-icons.com_68778.svg</file>
+        <file>Icon/bottom.svg</file>
+        <file>Icon/coffee.svg</file>
+        <file>Icon/Setting.svg</file>
+        <file>Icon/snack.svg</file>
+        <file>Icon/water.svg</file>
+        <file>Icon/Help.svg</file>
+        <file>Icon/height.svg</file>
+    </qresource>
+</RCC>
