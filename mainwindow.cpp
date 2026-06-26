@@ -13,7 +13,7 @@
 #include "pay_price.h"
 #include <QMessageBox>
 #include <QSerialPortInfo>
-#include <QFrame>
+#include <QSizePolicy>
 
 class CustomToolButtonStyle : public QProxyStyle {
 public:
@@ -43,73 +43,65 @@ private:
     int m_bottomShift;
 };
 
-static QToolButton *makeNavButton(const QString &text, const QString &iconPath, QWidget *parent)
+static QToolButton *makeModuleButton(const QString &text, const QString &iconPath, QWidget *parent)
 {
     auto *btn = new QToolButton(parent);
     btn->setIcon(QIcon(iconPath));
     btn->setText(text);
     btn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
     btn->setIconSize(QSize(48, 48));
-    btn->setFixedSize(120, 100);
-    btn->setStyle(new CustomToolButtonStyle(7, 0));
+    btn->setFixedSize(110, 88);
+    btn->setStyle(new CustomToolButtonStyle(5, 0));
     btn->setCheckable(true);
     return btn;
 }
 
-MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent),
-      device(new RP2040Device(this)),
-      coinLogic(new Pulses(this)),
-      listener(new GpioListener(this))
+MainWindow::CategoryGridState &MainWindow::gridState(ProductCategory category)
 {
-    setWindowTitle(tr("Tach Coffee & Snack"));
-    setStyleSheet(QStringLiteral(
-        "QMainWindow { background: #f4f6f8; }"
-        "QLabel#balanceLabel { font-size: 22px; font-weight: 600; color: #1a3a52; }"
-        "QLabel#statusLabel { font-size: 16px; color: #555; min-height: 24px; }"
+    switch (category) {
+    case ProductCategory::Coffee: return m_coffeeGrid;
+    case ProductCategory::Water: return m_waterGrid;
+    case ProductCategory::Snacks: return m_snacksGrid;
+    }
+    return m_snacksGrid;
+}
+
+void MainWindow::setupBottomTaskbar(QWidget *central)
+{
+    bottomTaskbar = new QFrame(central);
+    bottomTaskbar->setObjectName(QStringLiteral("bottomTaskbar"));
+    bottomTaskbar->setFixedHeight(110);
+    bottomTaskbar->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    bottomTaskbar->setStyleSheet(QStringLiteral(
+        "QFrame#bottomTaskbar {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+        "    stop:0 #3d5a80, stop:1 #293241);"
+        "  border-top: 2px solid #1d2d44;"
+        "}"
+        "QFrame#bottomTaskbar QToolButton {"
+        "  color: white;"
+        "  background: transparent;"
+        "  border: none;"
+        "  font-size: 13px;"
+        "  font-weight: 600;"
+        "}"
+        "QFrame#bottomTaskbar QToolButton:hover {"
+        "  background: rgba(255,255,255,0.12);"
+        "  border-radius: 6px;"
+        "}"
+        "QFrame#bottomTaskbar QToolButton:checked {"
+        "  background: rgba(255,255,255,0.22);"
+        "  border-radius: 6px;"
+        "}"
     ));
 
-    auto *central = new QWidget(this);
-    setCentralWidget(central);
-    auto *mainLayout = new QVBoxLayout(central);
-    mainLayout->setContentsMargins(24, 16, 24, 16);
-    mainLayout->setSpacing(12);
+    auto *barLayout = new QHBoxLayout(bottomTaskbar);
+    barLayout->setContentsMargins(16, 6, 16, 6);
+    barLayout->setSpacing(12);
 
-    auto *topRow = new QHBoxLayout();
-    balanceLabel = new QLabel(tr("Баланс: ₴0.00"), this);
-    balanceLabel->setObjectName(QStringLiteral("balanceLabel"));
-    statusLabel = new QLabel(this);
-    statusLabel->setObjectName(QStringLiteral("statusLabel"));
-    topRow->addWidget(statusLabel);
-    topRow->addStretch();
-    topRow->addWidget(balanceLabel);
-    mainLayout->addLayout(topRow);
-
-    connect(listener, &GpioListener::pulseDetected, coinLogic, &Pulses::handlePulse);
-    listener->start();
-
-    connect(coinLogic, &Pulses::moneyUpdated, this, [this](int balance) {
-        if (MachineSettings::instance().freeMode()) {
-            balanceLabel->hide();
-            return;
-        }
-        balanceLabel->show();
-        const double uah = balance / 100.0;
-        balanceLabel->setText(tr("Баланс: ₴%1").arg(QString::number(uah, 'f', 2)));
-    });
-
-    categoryStack = new QStackedWidget(this);
-    MachineSettings &cfg = MachineSettings::instance();
-
-    categoryStack->addWidget(buildCategoryPage(cfg.coffeeItems(), QStringLiteral("#6f4e37")));
-    categoryStack->addWidget(buildCategoryPage(cfg.waterItems(), QStringLiteral("#2b7bbb")));
-    categoryStack->addWidget(buildCategoryPage(cfg.snackItems(), QStringLiteral("#c45c26")));
-
-    mainLayout->addWidget(categoryStack, 1);
-
-    coffeeBtn = makeNavButton(tr("Кава"), QStringLiteral(":/Icon/Icon/coffee.svg"), this);
-    snackBtn = makeNavButton(tr("Снеки"), QStringLiteral(":/Icon/Icon/snack.svg"), this);
-    waterBtn = makeNavButton(tr("Вода"), QStringLiteral(":/Icon/Icon/water.svg"), this);
+    coffeeBtn = makeModuleButton(tr("020"), QStringLiteral(":/Icon/Icon/coffee.svg"), bottomTaskbar);
+    snackBtn = makeModuleButton(tr("!=5:8"), QStringLiteral(":/Icon/Icon/snack.svg"), bottomTaskbar);
+    waterBtn = makeModuleButton(tr(">40"), QStringLiteral(":/Icon/Icon/water.svg"), bottomTaskbar);
 
     connect(coffeeBtn, &QToolButton::clicked, this, [this]() {
         switchCategory(ProductCategory::Coffee);
@@ -121,33 +113,41 @@ MainWindow::MainWindow(QWidget *parent)
         switchCategory(ProductCategory::Water);
     });
 
-    auto *heightBtn = new QToolButton(this);
-    auto *bottomBtn = new QToolButton(this);
-    heightBtn->setIcon(QIcon(QStringLiteral(":/Icon/Icon/height.svg")));
-    bottomBtn->setIcon(QIcon(QStringLiteral(":/Icon/Icon/bottom.svg")));
-    for (QToolButton *b : {heightBtn, bottomBtn}) {
+    auto *leftBox = new QWidget(bottomTaskbar);
+    auto *leftLayout = new QHBoxLayout(leftBox);
+    leftLayout->setContentsMargins(0, 0, 0, 0);
+    leftLayout->setSpacing(8);
+    leftLayout->addWidget(coffeeBtn);
+    leftLayout->addWidget(snackBtn);
+    leftLayout->addWidget(waterBtn);
+
+    pageUpBtn = new QToolButton(bottomTaskbar);
+    pageDownBtn = new QToolButton(bottomTaskbar);
+    pageUpBtn->setIcon(QIcon(QStringLiteral(":/Icon/Icon/height.svg")));
+    pageDownBtn->setIcon(QIcon(QStringLiteral(":/Icon/Icon/bottom.svg")));
+    for (QToolButton *b : {pageUpBtn, pageDownBtn}) {
         b->setToolButtonStyle(Qt::ToolButtonIconOnly);
-        b->setIconSize(QSize(80, 80));
-        b->setFixedSize(100, 100);
-        b->hide();
+        b->setIconSize(QSize(72, 72));
+        b->setFixedSize(88, 88);
+        b->setStyle(new CustomToolButtonStyle(4, 0));
     }
+    connect(pageUpBtn, &QToolButton::clicked, this, &MainWindow::pageUp);
+    connect(pageDownBtn, &QToolButton::clicked, this, &MainWindow::pageDown);
 
-    auto *helpBtn = new QToolButton(this);
-    helpBtn->setIcon(QIcon(QStringLiteral(":/Icon/Icon/Help.svg")));
-    helpBtn->setText(tr("Допомога"));
-    helpBtn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-    helpBtn->setIconSize(QSize(48, 48));
-    helpBtn->setFixedSize(140, 100);
-    helpBtn->setStyle(new CustomToolButtonStyle(7, 0));
+    auto *centerBox = new QWidget(bottomTaskbar);
+    auto *centerLayout = new QHBoxLayout(centerBox);
+    centerLayout->setContentsMargins(0, 0, 0, 0);
+    centerLayout->setSpacing(16);
+    centerLayout->addWidget(pageUpBtn);
+    centerLayout->addWidget(pageDownBtn);
 
-    auto *settingsBtn = new QToolButton(this);
+    auto *settingsBtn = new QToolButton(bottomTaskbar);
     settingsBtn->setIcon(QIcon(QStringLiteral(":/Icon/Icon/Setting.svg")));
-    settingsBtn->setText(tr("Налаштування"));
+    settingsBtn->setText(tr("0;0HBC20==O"));
     settingsBtn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-    settingsBtn->setIconSize(QSize(48, 48));
-    settingsBtn->setFixedSize(140, 100);
-    settingsBtn->setStyle(new CustomToolButtonStyle(7, 0));
-
+    settingsBtn->setIconSize(QSize(40, 40));
+    settingsBtn->setFixedSize(120, 88);
+    settingsBtn->setStyle(new CustomToolButtonStyle(5, 0));
     connect(settingsBtn, &QToolButton::clicked, this, [this]() {
         auto *settingsWin = new SettingsWindow(this);
         connect(settingsWin, &SettingsWindow::settingsApplied,
@@ -155,27 +155,70 @@ MainWindow::MainWindow(QWidget *parent)
         settingsWin->show();
     });
 
-    bottomLeftPanel = new QWidget(this);
-    auto *leftLayout = new QHBoxLayout(bottomLeftPanel);
-    leftLayout->setContentsMargins(0, 0, 0, 0);
-    leftLayout->setSpacing(10);
-    leftLayout->addWidget(coffeeBtn);
-    leftLayout->addWidget(snackBtn);
-    leftLayout->addWidget(waterBtn);
+    auto *rightBox = new QWidget(bottomTaskbar);
+    auto *rightLayout = new QHBoxLayout(rightBox);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    rightLayout->addWidget(settingsBtn);
 
-    auto *bottomLayout = new QHBoxLayout();
-    bottomLayout->addWidget(bottomLeftPanel);
-    bottomLayout->addStretch();
-    bottomLayout->addWidget(helpBtn);
-    bottomLayout->addWidget(settingsBtn);
-    mainLayout->addLayout(bottomLayout);
+    barLayout->addWidget(leftBox, 0, Qt::AlignLeft | Qt::AlignVCenter);
+    barLayout->addStretch(1);
+    barLayout->addWidget(centerBox, 0, Qt::AlignCenter);
+    barLayout->addStretch(1);
+    barLayout->addWidget(rightBox, 0, Qt::AlignRight | Qt::AlignVCenter);
+}
+
+MainWindow::MainWindow(QWidget *parent)
+    : QMainWindow(parent),
+      device(new RP2040Device(this)),
+      coinLogic(new Pulses(this)),
+      listener(new GpioListener(this))
+{
+    setWindowTitle(tr("Tach Coffee & Snack"));
+    setStyleSheet(QStringLiteral("QMainWindow { background: #e8eaed; }"));
+
+    auto *central = new QWidget(this);
+    setCentralWidget(central);
+
+    auto *mainLayout = new QVBoxLayout(central);
+    mainLayout->setContentsMargins(8, 8, 8, 0);
+    mainLayout->setSpacing(6);
+
+    balanceLabel = new QLabel(tr("0;0=A: �0.00"), central);
+    balanceLabel->setStyleSheet(QStringLiteral(
+        "font-size: 20px; font-weight: 600; color: #1a3a52; padding-right: 8px;"
+    ));
+    mainLayout->addWidget(balanceLabel, 0, Qt::AlignRight);
+
+    connect(listener, &GpioListener::pulseDetected, coinLogic, &Pulses::handlePulse);
+    listener->start();
+
+    connect(coinLogic, &Pulses::moneyUpdated, this, [this](int balance) {
+        if (MachineSettings::instance().freeMode()) {
+            balanceLabel->hide();
+            return;
+        }
+        balanceLabel->show();
+        const double uah = balance / 100.0;
+        balanceLabel->setText(tr("0;0=A: �%1").arg(QString::number(uah, 'f', 2)));
+    });
+
+    categoryStack = new QStackedWidget(central);
+    categoryStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    mainLayout->addWidget(categoryStack, 1);
+
+    statusLabel = new QLabel(central);
+    statusLabel->setStyleSheet(QStringLiteral("color: #555; font-size: 12px; padding: 2px 8px;"));
+    mainLayout->addWidget(statusLabel, 0);
+
+    setupBottomTaskbar(central);
+    mainLayout->addWidget(bottomTaskbar, 0);
+
+    rebuildAllCategoryPages();
 
     for (const QSerialPortInfo &info : QSerialPortInfo::availablePorts()) {
         if (info.vendorIdentifier() == 0x2e8a) {
             if (device->connect(info.portName(), 115200))
-                statusLabel->setText(tr("Плата розширення: підключено (%1)").arg(info.portName()));
-            else
-                statusLabel->setText(tr("Плата розширення: порт не відкрито"));
+                statusLabel->setText(tr(";0B0 @>7H8@5==O: %1").arg(info.portName()));
             break;
         }
     }
@@ -191,67 +234,141 @@ MainWindow::~MainWindow()
     }
 }
 
-QWidget *MainWindow::buildCategoryPage(const QVector<ProductItem> &items,
-                                         const QString &accentColor)
+QWidget *MainWindow::buildCategoryGridPage(const QVector<ProductItem> &items,
+                                           CategoryGridState &state)
 {
+    state.items = items;
+    state.currentPage = 0;
+    state.slots.clear();
+
     auto *page = new QWidget();
-    auto *layout = new QVBoxLayout(page);
-    layout->setAlignment(Qt::AlignCenter);
+    auto *pageLayout = new QVBoxLayout(page);
+    pageLayout->setContentsMargins(4, 4, 4, 4);
+    pageLayout->setSpacing(0);
 
-    for (const ProductItem &item : items) {
-        auto *card = new QFrame(page);
-        card->setFixedSize(560, 420);
-        card->setStyleSheet(QStringLiteral(
-            "QFrame {"
-            "  background: white;"
-            "  border-radius: 20px;"
-            "  border: 2px solid %1;"
-            "}"
-        ).arg(accentColor));
+    auto *gridHost = new QWidget(page);
+    gridHost->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    auto *grid = new QGridLayout(gridHost);
+    grid->setSpacing(12);
+    grid->setContentsMargins(0, 0, 0, 0);
 
-        auto *cardLayout = new QVBoxLayout(card);
-        cardLayout->setSpacing(8);
-        cardLayout->setContentsMargins(24, 20, 24, 20);
+    for (int slot = 0; slot < itemsPerPage; ++slot) {
+        GridSlot gs;
 
-        auto *iconBtn = new QToolButton(card);
-        iconBtn->setIcon(QIcon(item.iconPath));
-        iconBtn->setIconSize(QSize(280, 200));
-        iconBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
-        iconBtn->setFixedSize(300, 220);
-        iconBtn->setStyleSheet(QStringLiteral("border: none; background: transparent;"));
-
-        auto *nameLabel = new QLabel(item.name, card);
-        nameLabel->setAlignment(Qt::AlignCenter);
-        nameLabel->setStyleSheet(QStringLiteral(
-            "font-size: 28px; font-weight: 700; color: #222;"
+        gs.iconBtn = new QToolButton(gridHost);
+        gs.iconBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        gs.iconBtn->setIconSize(QSize(300, 220));
+        gs.iconBtn->setFixedSize(300, 220);
+        gs.iconBtn->setStyleSheet(QStringLiteral(
+            "QToolButton { background: white; border: 1px solid #c5cdd8; border-radius: 8px; }"
+            "QToolButton:pressed { background: #eef2f7; }"
         ));
 
-        auto *priceLabel = new QLabel(item.priceText, card);
-        priceLabel->setAlignment(Qt::AlignCenter);
-        priceLabel->setStyleSheet(QStringLiteral(
-            "font-size: 22px; color: %1; font-weight: 600;"
-        ).arg(accentColor));
+        gs.nameLabel = new QLabel(gridHost);
+        gs.nameLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        gs.nameLabel->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: 600;"));
 
-        cardLayout->addWidget(iconBtn, 0, Qt::AlignCenter);
-        cardLayout->addWidget(nameLabel);
-        cardLayout->addWidget(priceLabel);
+        gs.priceLabel = new QLabel(gridHost);
+        gs.priceLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        gs.priceLabel->setStyleSheet(QStringLiteral("font-size: 15px; color: #2b6cb0;"));
 
-        connect(iconBtn, &QToolButton::clicked, this, [this, item]() {
-            handleProductClick(item);
-        });
+        auto *infoWidget = new QWidget(gridHost);
+        infoWidget->setFixedWidth(gs.iconBtn->width());
+        auto *infoLayout = new QHBoxLayout(infoWidget);
+        infoLayout->setContentsMargins(4, 0, 4, 0);
+        infoLayout->setSpacing(5);
+        infoLayout->addWidget(gs.nameLabel);
+        infoLayout->addWidget(gs.priceLabel);
 
-        layout->addWidget(card, 0, Qt::AlignCenter);
+        gs.cell = new QWidget(gridHost);
+        auto *cellLayout = new QVBoxLayout(gs.cell);
+        cellLayout->setContentsMargins(0, 0, 0, 0);
+        cellLayout->setSpacing(4);
+        cellLayout->addWidget(gs.iconBtn, 0, Qt::AlignCenter);
+        cellLayout->addWidget(infoWidget, 0, Qt::AlignCenter);
+
+        const int row = slot / gridColumns;
+        const int col = slot % gridColumns;
+        grid->addWidget(gs.cell, row, col, Qt::AlignCenter);
+
+        state.slots.append(gs);
     }
 
+    pageLayout->addWidget(gridHost, 1, Qt::AlignTop);
+    state.page = page;
     return page;
+}
+
+void MainWindow::showGridPage(ProductCategory category)
+{
+    CategoryGridState &state = gridState(category);
+    const int total = state.items.size();
+    const int start = state.currentPage * itemsPerPage;
+
+    for (int slot = 0; slot < state.slots.size(); ++slot) {
+        const int index = start + slot;
+        GridSlot &gs = state.slots[slot];
+
+        if (index < total) {
+            const ProductItem &item = state.items[index];
+            gs.cell->show();
+            gs.iconBtn->setIcon(QIcon(item.iconPath));
+            gs.nameLabel->setText(item.name);
+            gs.priceLabel->setText(item.priceText);
+
+            gs.iconBtn->disconnect();
+            connect(gs.iconBtn, &QToolButton::clicked, this, [this, item]() {
+                handleProductClick(item);
+            });
+        } else {
+            gs.cell->hide();
+        }
+    }
+}
+
+void MainWindow::pageUp()
+{
+    CategoryGridState &state = gridState(currentCategory);
+    if (state.currentPage > 0) {
+        --state.currentPage;
+        showGridPage(currentCategory);
+    }
+}
+
+void MainWindow::pageDown()
+{
+    CategoryGridState &state = gridState(currentCategory);
+    const int total = state.items.size();
+    const int maxPage = total > 0 ? (total - 1) / itemsPerPage : 0;
+    if (state.currentPage < maxPage) {
+        ++state.currentPage;
+        showGridPage(currentCategory);
+    }
+}
+
+void MainWindow::rebuildAllCategoryPages()
+{
+    while (categoryStack->count() > 0) {
+        QWidget *w = categoryStack->widget(0);
+        categoryStack->removeWidget(w);
+        w->deleteLater();
+    }
+
+    MachineSettings &cfg = MachineSettings::instance();
+    m_coffeeGrid = CategoryGridState();
+    m_waterGrid = CategoryGridState();
+    m_snacksGrid = CategoryGridState();
+
+    categoryStack->addWidget(buildCategoryGridPage(cfg.coffeeItems(), m_coffeeGrid));
+    categoryStack->addWidget(buildCategoryGridPage(cfg.waterItems(), m_waterGrid));
+    categoryStack->addWidget(buildCategoryGridPage(cfg.snackItems(), m_snacksGrid));
 }
 
 void MainWindow::handleProductClick(const ProductItem &item)
 {
     MachineSettings &cfg = MachineSettings::instance();
-    const bool freeMode = cfg.freeMode();
 
-    if (!freeMode) {
+    if (!cfg.freeMode()) {
         Pay_Price payDialog(item.name, item.priceText, QIcon(item.iconPath), this);
         connect(coinLogic, &Pulses::moneyUpdated, &payDialog, [&payDialog](int newBalance) {
             payDialog.updateBalance(newBalance);
@@ -265,28 +382,27 @@ void MainWindow::handleProductClick(const ProductItem &item)
         coinLogic->resetBalance();
     }
 
-    statusLabel->setText(tr("Видача: %1…").arg(item.name));
-    const auto result = device->sendDispenseCommand(
-        item.gpioChannel, cfg.buttonHoldMs());
+    statusLabel->setText(tr("840G0: %1&").arg(item.name));
+    const auto result = device->sendDispenseCommand(item.gpioChannel, cfg.buttonHoldMs());
 
     switch (result) {
     case RP2040Device::DispenseResult::Success:
-        statusLabel->setText(tr("Готово: %1").arg(item.name));
+        statusLabel->setText(tr(">B>2>: %1").arg(item.name));
         break;
     case RP2040Device::DispenseResult::Error:
-        statusLabel->setText(tr("Помилка плати розширення"));
-        QMessageBox::warning(this, tr("Помилка"),
-                             tr("Плата розширення повідомила про помилку видачі."));
+        statusLabel->setText(tr("><8;:0 ?;0B8 @>7H8@5==O"));
+        QMessageBox::warning(this, tr("><8;:0"),
+                             tr(";0B0 @>7H8@5==O ?>2V4><8;0 ?@> ?><8;:C 2840GV."));
         break;
     case RP2040Device::DispenseResult::PortClosed:
-        statusLabel->setText(tr("Немає зв’язку з платою"));
-        QMessageBox::warning(this, tr("Зв’язок"),
-                             tr("Послідовний порт до RP2040 не відкритий."));
+        statusLabel->setText(tr("5<0T 72O7:C 7 ?;0B>N"));
+        QMessageBox::warning(this, tr("2O7>:"),
+                             tr(">A;V4>2=89 ?>@B 4> RP2040 =5 2V4:@8B89."));
         break;
     case RP2040Device::DispenseResult::Timeout:
-        statusLabel->setText(tr("Немає підтвердження від плати"));
-        QMessageBox::warning(this, tr("Таймаут"),
-                             tr("Плата не надіслала підтвердження. Перевірте прошивку main2."));
+        statusLabel->setText(tr("5<0T ?V4B25@465==O 2V4 ?;0B8"));
+        QMessageBox::warning(this, tr(""09<0CB"),
+                             tr(";0B0 =5 =04VA;0;0 ?V4B25@465==O."));
         break;
     }
 }
@@ -298,6 +414,7 @@ void MainWindow::switchCategory(ProductCategory category)
 
     currentCategory = category;
     categoryStack->setCurrentIndex(static_cast<int>(category));
+    showGridPage(category);
 
     if (category == ProductCategory::Coffee)
         setActiveModuleButton(coffeeBtn);
@@ -310,20 +427,17 @@ void MainWindow::switchCategory(ProductCategory category)
 void MainWindow::setActiveModuleButton(QToolButton *active)
 {
     for (QToolButton *b : {coffeeBtn, waterBtn, snackBtn}) {
-        const bool on = (b == active);
-        b->setChecked(on);
-        b->setStyleSheet(on
-            ? QStringLiteral("QToolButton { background: #dce8f5; border-radius: 8px; }")
-            : QString());
+        if (b)
+            b->setChecked(b == active);
     }
 }
 
 void MainWindow::updateModuleButtons()
 {
     MachineSettings &cfg = MachineSettings::instance();
-    coffeeBtn->setVisible(cfg.moduleEnabled(ProductCategory::Coffee));
-    waterBtn->setVisible(cfg.moduleEnabled(ProductCategory::Water));
-    snackBtn->setVisible(cfg.moduleEnabled(ProductCategory::Snacks));
+    if (coffeeBtn) coffeeBtn->setVisible(cfg.moduleEnabled(ProductCategory::Coffee));
+    if (waterBtn) waterBtn->setVisible(cfg.moduleEnabled(ProductCategory::Water));
+    if (snackBtn) snackBtn->setVisible(cfg.moduleEnabled(ProductCategory::Snacks));
 
     if (cfg.freeMode())
         balanceLabel->hide();
@@ -343,7 +457,7 @@ void MainWindow::updateModuleButtons()
                         || cfg.moduleEnabled(ProductCategory::Snacks);
 
     if (!anyModule) {
-        statusLabel->setText(tr("Увімкніть хоча б один модуль у налаштуваннях"));
+        statusLabel->setText(tr("#2V<:=VBL E>G0 1 >48= <>4C;L C =0;0HBC20==OE"));
         return;
     }
 
@@ -360,16 +474,6 @@ void MainWindow::applyMachineSettings()
 
 void MainWindow::onSettingsApplied()
 {
-    while (categoryStack->count() > 0) {
-        QWidget *w = categoryStack->widget(0);
-        categoryStack->removeWidget(w);
-        w->deleteLater();
-    }
-
-    MachineSettings &cfg = MachineSettings::instance();
-    categoryStack->insertWidget(0, buildCategoryPage(cfg.coffeeItems(), QStringLiteral("#6f4e37")));
-    categoryStack->insertWidget(1, buildCategoryPage(cfg.waterItems(), QStringLiteral("#2b7bbb")));
-    categoryStack->insertWidget(2, buildCategoryPage(cfg.snackItems(), QStringLiteral("#c45c26")));
-
+    rebuildAllCategoryPages();
     applyMachineSettings();
 }
