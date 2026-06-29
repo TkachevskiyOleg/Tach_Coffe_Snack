@@ -17,6 +17,7 @@ struct ProductItem {
     int priceKopiyky = 0;
     int gpioChannel = 1;
     QString iconPath;
+    bool sparkling = false;   // лише для води: газована/негазована
 };
 
 class MachineSettings : public QObject {
@@ -37,12 +38,18 @@ public:
     const QVector<ProductItem> &waterItems() const { return m_waterItems; }
     const QVector<ProductItem> &snackItems() const { return m_snackItems; }
 
-    void setSnackDisplayName(const QString &name);
-    void setSnackGpio(int gpioChannel);
-    void setSnackPriceKopiyky(int kopiyky);
+    // Універсальний доступ за категорією
+    const QVector<ProductItem> &items(ProductCategory category) const;
+    int itemCount(ProductCategory category) const;
 
-    void setCoffeeGpio(int index, int gpioChannel);
-    void setWaterGpio(int index, int gpioChannel);
+    // Редагування будь-якого товару за індексом
+    void setItemName(ProductCategory category, int index, const QString &name);
+    void setItemGpio(ProductCategory category, int index, int gpioChannel);
+    void setItemPriceKopiyky(ProductCategory category, int index, int kopiyky);
+    void setItemSparkling(ProductCategory category, int index, bool sparkling);
+
+    // Зміна кількості товарів у категорії (1..50)
+    void resizeCategory(ProductCategory category, int newCount);
 
     void load();
     void save();
@@ -54,11 +61,16 @@ private:
     explicit MachineSettings(QObject *parent = nullptr);
     void initDefaults();
 
+    QVector<ProductItem> &itemsMutable(ProductCategory category);
+    ProductItem makeDefaultItem(ProductCategory category, int index) const;
+    static QString priceTextFromKopiyky(int kopiyky);
+    static const char *categoryKey(ProductCategory category);
+
     bool m_freeMode = false;
     bool m_coffeeEnabled = true;
     bool m_waterEnabled = true;
     bool m_snacksEnabled = true;
-    int m_buttonHoldMs = 1000;
+    int m_buttonHoldMs = 5000;
 
     QVector<ProductItem> m_coffeeItems;
     QVector<ProductItem> m_waterItems;

@@ -10,6 +10,7 @@ CONFIG += c++17
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
 
 SOURCES += \
+    Billvalidator.cpp \
     gpio_listener.cpp \
     machinesettings.cpp \
     main.cpp \
@@ -20,6 +21,7 @@ SOURCES += \
     settingswindow.cpp
 
 HEADERS += \
+    Billvalidator.h \
     gpio_listener.h \
     machinesettings.h \
     mainwindow.h \
@@ -45,4 +47,3 @@ RESOURCES += \
     resources.qrc
 
 LIBS += -lgpiod
-

@@ -26,6 +26,7 @@ void MachineSettings::initDefaults()
             (15 + (i % 5) * 2) * 100,
             (i % 14) + 1,
             QStringLiteral(":/Icon/Icon/coffee.svg"),
+            false,
         });
     }
 
@@ -40,6 +41,7 @@ void MachineSettings::initDefaults()
             ((i + 3) % 14) + 1,
             sparkling ? QStringLiteral(":/Icon/Icon/gaz_water2.svg")
                       : QStringLiteral(":/Icon/Icon/water.svg"),
+            sparkling,
         });
     }
 
@@ -52,8 +54,49 @@ void MachineSettings::initDefaults()
             2000,
             (i % 14) + 1,
             QStringLiteral(":/Icon/Icon/snack.svg"),
+            false,
         });
     }
+}
+
+const char *MachineSettings::categoryKey(ProductCategory category)
+{
+    switch (category) {
+    case ProductCategory::Coffee: return "coffee";
+    case ProductCategory::Water:  return "water";
+    case ProductCategory::Snacks: return "snack";
+    }
+    return "snack";
+}
+
+QString MachineSettings::priceTextFromKopiyky(int kopiyky)
+{
+    return QStringLiteral("₴%1").arg(kopiyky / 100.0, 0, 'f', 2);
+}
+
+QVector<ProductItem> &MachineSettings::itemsMutable(ProductCategory category)
+{
+    switch (category) {
+    case ProductCategory::Coffee: return m_coffeeItems;
+    case ProductCategory::Water:  return m_waterItems;
+    case ProductCategory::Snacks: return m_snackItems;
+    }
+    return m_snackItems;
+}
+
+const QVector<ProductItem> &MachineSettings::items(ProductCategory category) const
+{
+    switch (category) {
+    case ProductCategory::Coffee: return m_coffeeItems;
+    case ProductCategory::Water:  return m_waterItems;
+    case ProductCategory::Snacks: return m_snackItems;
+    }
+    return m_snackItems;
+}
+
+int MachineSettings::itemCount(ProductCategory category) const
+{
+    return items(category).size();
 }
 
 bool MachineSettings::moduleEnabled(ProductCategory category) const
@@ -88,83 +131,168 @@ void MachineSettings::setButtonHoldMs(int ms)
     m_buttonHoldMs = qBound(100, ms, 30000);
 }
 
-void MachineSettings::setSnackDisplayName(const QString &name)
+void MachineSettings::setItemName(ProductCategory category, int index, const QString &name)
 {
-    if (m_snackItems.isEmpty())
+    QVector<ProductItem> &v = itemsMutable(category);
+    if (index < 0 || index >= v.size())
         return;
-    m_snackItems[0].name = name.isEmpty() ? QStringLiteral("Снек 1") : name;
+    v[index].name = name.isEmpty()
+        ? QStringLiteral("%1 %2").arg(QString::fromUtf8(categoryKey(category))).arg(index + 1)
+        : name;
 }
 
-void MachineSettings::setSnackGpio(int gpioChannel)
+void MachineSettings::setItemGpio(ProductCategory category, int index, int gpioChannel)
 {
-    if (m_snackItems.isEmpty())
+    QVector<ProductItem> &v = itemsMutable(category);
+    if (index < 0 || index >= v.size())
         return;
-    m_snackItems[0].gpioChannel = qBound(1, gpioChannel, 14);
+    v[index].gpioChannel = qBound(1, gpioChannel, 14);
 }
 
-void MachineSettings::setSnackPriceKopiyky(int kopiyky)
+void MachineSettings::setItemPriceKopiyky(ProductCategory category, int index, int kopiyky)
 {
-    if (m_snackItems.isEmpty())
+    QVector<ProductItem> &v = itemsMutable(category);
+    if (index < 0 || index >= v.size())
         return;
-    m_snackItems[0].priceKopiyky = qMax(0, kopiyky);
-    m_snackItems[0].priceText = QStringLiteral("₴%1").arg(kopiyky / 100.0, 0, 'f', 2);
+    v[index].priceKopiyky = qMax(0, kopiyky);
+    v[index].priceText = priceTextFromKopiyky(v[index].priceKopiyky);
 }
 
-void MachineSettings::setCoffeeGpio(int index, int gpioChannel)
+void MachineSettings::setItemSparkling(ProductCategory category, int index, bool sparkling)
 {
-    if (index >= 0 && index < m_coffeeItems.size())
-        m_coffeeItems[index].gpioChannel = qBound(1, gpioChannel, 14);
+    QVector<ProductItem> &v = itemsMutable(category);
+    if (index < 0 || index >= v.size())
+        return;
+    v[index].sparkling = sparkling;
+    // оновлюємо іконку для води відповідно до типу
+    if (category == ProductCategory::Water) {
+        v[index].iconPath = sparkling
+            ? QStringLiteral(":/Icon/Icon/gaz_water2.svg")
+            : QStringLiteral(":/Icon/Icon/water.svg");
+    }
 }
 
-void MachineSettings::setWaterGpio(int index, int gpioChannel)
+ProductItem MachineSettings::makeDefaultItem(ProductCategory category, int index) const
 {
-    if (index >= 0 && index < m_waterItems.size())
-        m_waterItems[index].gpioChannel = qBound(1, gpioChannel, 14);
+    ProductItem it;
+    const QString key = QString::fromUtf8(categoryKey(category));
+    it.id = QStringLiteral("%1_%2").arg(key).arg(index + 1);
+    it.gpioChannel = (index % 14) + 1;
+    switch (category) {
+    case ProductCategory::Coffee:
+        it.name = QStringLiteral("Кава %1").arg(index + 1);
+        it.priceKopiyky = 1500;
+        it.iconPath = QStringLiteral(":/Icon/Icon/coffee.svg");
+        break;
+    case ProductCategory::Water:
+        it.name = QStringLiteral("Вода %1").arg(index + 1);
+        it.priceKopiyky = 1000;
+        it.iconPath = QStringLiteral(":/Icon/Icon/water.svg");
+        it.sparkling = false;
+        break;
+    case ProductCategory::Snacks:
+        it.name = QStringLiteral("Снек %1").arg(index + 1);
+        it.priceKopiyky = 2000;
+        it.iconPath = QStringLiteral(":/Icon/Icon/snack.svg");
+        break;
+    }
+    it.priceText = priceTextFromKopiyky(it.priceKopiyky);
+    return it;
+}
+
+void MachineSettings::resizeCategory(ProductCategory category, int newCount)
+{
+    QVector<ProductItem> &v = itemsMutable(category);
+    newCount = qBound(1, newCount, 50);  // межі: від 1 до 50 товарів
+    if (newCount == v.size())
+        return;
+    if (newCount < v.size()) {
+        v.resize(newCount);
+    } else {
+        for (int i = v.size(); i < newCount; ++i)
+            v.append(makeDefaultItem(category, i));
+    }
 }
 
 void MachineSettings::load()
 {
     QSettings s(QStringLiteral("Tach"), QStringLiteral("CoffeSnack"));
+
+    // Версія схеми збереження. Якщо у сховищі стара версія (або її немає) —
+    // ігноруємо застарілі ключі й беремо дефолти, щоб не підхоплювати сміття
+    // від попередніх версій програми (напр. назви, що "переїхали" між модулями).
+    const int SCHEMA_VERSION = 2;
+    const int storedVersion = s.value(QStringLiteral("schemaVersion"), 0).toInt();
+    if (storedVersion < SCHEMA_VERSION) {
+        // Стара/відсутня схема — чистимо все й лишаємо дефолти з initDefaults().
+        s.clear();
+        s.sync();
+        return;
+    }
+
     m_freeMode = s.value(QStringLiteral("freeMode"), false).toBool();
     m_coffeeEnabled = s.value(QStringLiteral("coffeeEnabled"), true).toBool();
     m_waterEnabled = s.value(QStringLiteral("waterEnabled"), true).toBool();
     m_snacksEnabled = s.value(QStringLiteral("snacksEnabled"), true).toBool();
-    m_buttonHoldMs = s.value(QStringLiteral("buttonHoldMs"), 1000).toInt();
+    m_buttonHoldMs = s.value(QStringLiteral("buttonHoldMs"), 5000).toInt();
 
-    if (!m_snackItems.isEmpty()) {
-        setSnackDisplayName(s.value(QStringLiteral("snackName"), m_snackItems[0].name).toString());
-        setSnackGpio(s.value(QStringLiteral("snackGpio"), m_snackItems[0].gpioChannel).toInt());
-        setSnackPriceKopiyky(s.value(QStringLiteral("snackPriceKop"), m_snackItems[0].priceKopiyky).toInt());
-    }
-
-    for (int i = 0; i < m_coffeeItems.size(); ++i) {
-        const QString key = QStringLiteral("coffeeGpio_%1").arg(i);
-        setCoffeeGpio(i, s.value(key, m_coffeeItems[i].gpioChannel).toInt());
-    }
-    for (int i = 0; i < m_waterItems.size(); ++i) {
-        const QString key = QStringLiteral("waterGpio_%1").arg(i);
-        setWaterGpio(i, s.value(key, m_waterItems[i].gpioChannel).toInt());
+    const ProductCategory cats[] = {
+        ProductCategory::Coffee, ProductCategory::Water, ProductCategory::Snacks
+    };
+    for (ProductCategory cat : cats) {
+        QVector<ProductItem> &v = itemsMutable(cat);
+        const QString key = QString::fromUtf8(categoryKey(cat));
+        // Кількість товарів цієї категорії теж зберігаємо
+        const int savedCount = s.value(QStringLiteral("%1_count").arg(key), v.size()).toInt();
+        resizeCategory(cat, savedCount);
+        for (int i = 0; i < v.size(); ++i) {
+            const QString base = QStringLiteral("%1_%2_").arg(key).arg(i);
+            v[i].name = s.value(base + QStringLiteral("name"), v[i].name).toString();
+            v[i].gpioChannel = qBound(1, s.value(base + QStringLiteral("gpio"), v[i].gpioChannel).toInt(), 14);
+            const int kop = s.value(base + QStringLiteral("priceKop"), v[i].priceKopiyky).toInt();
+            v[i].priceKopiyky = qMax(0, kop);
+            v[i].priceText = priceTextFromKopiyky(v[i].priceKopiyky);
+            if (cat == ProductCategory::Water) {
+                v[i].sparkling = s.value(base + QStringLiteral("sparkling"), v[i].sparkling).toBool();
+                v[i].iconPath = v[i].sparkling
+                    ? QStringLiteral(":/Icon/Icon/gaz_water2.svg")
+                    : QStringLiteral(":/Icon/Icon/water.svg");
+            }
+        }
     }
 }
 
 void MachineSettings::save()
 {
     QSettings s(QStringLiteral("Tach"), QStringLiteral("CoffeSnack"));
+    s.setValue(QStringLiteral("schemaVersion"), 2);
     s.setValue(QStringLiteral("freeMode"), m_freeMode);
     s.setValue(QStringLiteral("coffeeEnabled"), m_coffeeEnabled);
     s.setValue(QStringLiteral("waterEnabled"), m_waterEnabled);
     s.setValue(QStringLiteral("snacksEnabled"), m_snacksEnabled);
     s.setValue(QStringLiteral("buttonHoldMs"), m_buttonHoldMs);
-    if (!m_snackItems.isEmpty()) {
-        s.setValue(QStringLiteral("snackName"), m_snackItems[0].name);
-        s.setValue(QStringLiteral("snackGpio"), m_snackItems[0].gpioChannel);
-        s.setValue(QStringLiteral("snackPriceKop"), m_snackItems[0].priceKopiyky);
-    }
 
-    for (int i = 0; i < m_coffeeItems.size(); ++i)
-        s.setValue(QStringLiteral("coffeeGpio_%1").arg(i), m_coffeeItems[i].gpioChannel);
-    for (int i = 0; i < m_waterItems.size(); ++i)
-        s.setValue(QStringLiteral("waterGpio_%1").arg(i), m_waterItems[i].gpioChannel);
+    const ProductCategory cats[] = {
+        ProductCategory::Coffee, ProductCategory::Water, ProductCategory::Snacks
+    };
+    for (ProductCategory cat : cats) {
+        const QVector<ProductItem> &v = items(cat);
+        const QString key = QString::fromUtf8(categoryKey(cat));
+
+        // прибираємо старі ключі цієї категорії, щоб не лишалось "хвостів"
+        // від попередньої (більшої) кількості товарів
+        s.remove(key);  // видаляє всю групу key/...
+        s.setValue(QStringLiteral("%1_count").arg(key), v.size());
+
+        for (int i = 0; i < v.size(); ++i) {
+            const QString base = QStringLiteral("%1_%2_").arg(key).arg(i);
+            s.setValue(base + QStringLiteral("name"), v[i].name);
+            s.setValue(base + QStringLiteral("gpio"), v[i].gpioChannel);
+            s.setValue(base + QStringLiteral("priceKop"), v[i].priceKopiyky);
+            if (cat == ProductCategory::Water)
+                s.setValue(base + QStringLiteral("sparkling"), v[i].sparkling);
+        }
+    }
 
     s.sync();
     emit settingsChanged();

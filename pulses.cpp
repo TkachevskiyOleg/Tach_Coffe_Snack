@@ -48,3 +48,11 @@ void Pulses::resetBalance() {
     qDebug() << "Баланс обнулено";
     emit moneyUpdated(balance);
 }
+
+void Pulses::addKopiyky(int kopiyky) {
+    if (kopiyky <= 0)
+        return;
+    balance += kopiyky;
+    qDebug() << "Купюрник додав:" << kopiyky << "копійок. Баланс:" << balance;
+    emit moneyUpdated(balance);
+}

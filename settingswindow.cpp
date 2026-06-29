@@ -1,93 +1,103 @@
 #include "settingswindow.h"
-#include "machinesettings.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QFormLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QGroupBox>
-#include <QFormLayout>
-#include <QScrollArea>
+#include <QPalette>
+#include <QColor>
 
 SettingsWindow::SettingsWindow(QWidget *parent)
-    : QWidget(parent)
+    : QWidget(parent, Qt::Window)
 {
     setWindowTitle(tr("Налаштування"));
-    resize(520, 640);
+    resize(480, 560);
 
-    auto *scroll = new QScrollArea(this);
-    scroll->setWidgetResizable(true);
-    auto *container = new QWidget();
-    scroll->setWidget(container);
+    // Окреме вікно з власним фоном, модальне поверх головного.
+    setWindowModality(Qt::ApplicationModal);
+    setAttribute(Qt::WA_DeleteOnClose);
+    // Непрозорий фон (інакше видно вміст головного вікна за діалогом).
+    setAutoFillBackground(true);
+    QPalette pal = palette();
+    pal.setColor(QPalette::Window, QColor(0xf0, 0xf2, 0xf5));
+    setPalette(pal);
 
-    auto *layout = new QVBoxLayout(container);
+    MachineSettings &cfg = MachineSettings::instance();
 
-    auto *modeGroup = new QGroupBox(tr("Режим роботи"), container);
+    // Копіюємо всі товари у робочий буфер (редагуємо буфер, застосовуємо при «Зберегти»)
+    bufCoffee = cfg.coffeeItems();
+    bufWater  = cfg.waterItems();
+    bufSnack  = cfg.snackItems();
+
+    auto *root = new QVBoxLayout(this);
+
+    // --- Режим роботи ---
+    auto *modeGroup = new QGroupBox(tr("Режим роботи"), this);
     auto *modeLayout = new QVBoxLayout(modeGroup);
     freeModeCheck = new QCheckBox(tr("Безкоштовний режим (без оплати)"), modeGroup);
     modeLayout->addWidget(freeModeCheck);
-    layout->addWidget(modeGroup);
+    root->addWidget(modeGroup);
 
-    auto *modulesGroup = new QGroupBox(tr("Модулі автомата"), container);
+    // --- Модулі автомата ---
+    auto *modulesGroup = new QGroupBox(tr("Модулі автомата"), this);
     auto *modulesLayout = new QVBoxLayout(modulesGroup);
     coffeeCheck = new QCheckBox(tr("Кава"), modulesGroup);
-    waterCheck = new QCheckBox(tr("Вода"), modulesGroup);
+    waterCheck  = new QCheckBox(tr("Вода"), modulesGroup);
     snacksCheck = new QCheckBox(tr("Снеки"), modulesGroup);
     modulesLayout->addWidget(coffeeCheck);
     modulesLayout->addWidget(waterCheck);
     modulesLayout->addWidget(snacksCheck);
-    auto *modulesHint = new QLabel(
-        tr("Увімкніть лише потрібні модулі. Нижнє меню і екран показуватимуть тільки їх."),
-        modulesGroup);
-    modulesHint->setWordWrap(true);
-    modulesHint->setStyleSheet(QStringLiteral("color: #666; font-size: 12px;"));
-    modulesLayout->addWidget(modulesHint);
-    layout->addWidget(modulesGroup);
+    root->addWidget(modulesGroup);
 
-    auto *gpioGroup = new QGroupBox(tr("Плата розширення (GPIO 1–14)"), container);
-    gpioSection = gpioGroup;
-    auto *gpioLayout = new QVBoxLayout(gpioGroup);
+    // --- Загальні параметри плати ---
+    auto *commonGroup = new QGroupBox(tr("Загальні параметри"), this);
+    auto *commonForm = new QFormLayout(commonGroup);
+    holdSecSpin = new QDoubleSpinBox(commonGroup);
+    holdSecSpin->setRange(0.1, 30.0);
+    holdSecSpin->setDecimals(1);
+    holdSecSpin->setSingleStep(0.5);
+    holdSecSpin->setSuffix(QStringLiteral(" с"));
+    commonForm->addRow(tr("Час утримання виходу:"), holdSecSpin);
+    root->addWidget(commonGroup);
 
-    auto *holdRow = new QHBoxLayout();
-    holdRow->addWidget(new QLabel(tr("Час утримання виходу (мс):"), gpioGroup));
-    holdMsSpin = new QSpinBox(gpioGroup);
-    holdMsSpin->setRange(100, 30000);
-    holdMsSpin->setSingleStep(100);
-    holdRow->addWidget(holdMsSpin);
-    gpioLayout->addLayout(holdRow);
+    // --- Редагування товару ---
+    auto *editGroup = new QGroupBox(tr("Налаштування товару"), this);
+    editGroupBox = editGroup;
+    auto *editForm = new QFormLayout(editGroup);
 
-    buildGpioRows();
-    for (QSpinBox *spin : coffeeGpioSpins) {
-        auto *row = new QHBoxLayout();
-        row->addWidget(new QLabel(tr("Кава — %1").arg(spin->property("label").toString()), gpioGroup));
-        row->addStretch();
-        row->addWidget(spin);
-        gpioLayout->addLayout(row);
-    }
-    for (QSpinBox *spin : waterGpioSpins) {
-        auto *row = new QHBoxLayout();
-        row->addWidget(new QLabel(tr("Вода — %1").arg(spin->property("label").toString()), gpioGroup));
-        row->addStretch();
-        row->addWidget(spin);
-        gpioLayout->addLayout(row);
-    }
+    moduleCombo = new QComboBox(editGroup);
+    moduleLabel = new QLabel(tr("Модуль:"), editGroup);
+    editForm->addRow(moduleLabel, moduleCombo);
 
-    auto *snackForm = new QFormLayout();
-    snackNameEdit = new QLineEdit(gpioGroup);
-    snackPriceSpin = new QDoubleSpinBox(gpioGroup);
-    snackPriceSpin->setRange(0, 999);
-    snackPriceSpin->setDecimals(2);
-    snackPriceSpin->setSuffix(QStringLiteral(" ₴"));
-    snackGpioSpin = new QSpinBox(gpioGroup);
-    snackGpioSpin->setRange(1, 14);
-    snackForm->addRow(tr("Назва снеку:"), snackNameEdit);
-    snackForm->addRow(tr("Ціна:"), snackPriceSpin);
-    snackForm->addRow(tr("Канал GPIO:"), snackGpioSpin);
-    gpioLayout->addLayout(snackForm);
-    layout->addWidget(gpioGroup);
+    countSpin = new QSpinBox(editGroup);
+    countSpin->setRange(1, 50);
+    editForm->addRow(tr("Кількість товарів:"), countSpin);
 
-    auto *root = new QVBoxLayout(this);
-    root->addWidget(scroll);
+    productCombo = new QComboBox(editGroup);
+    editForm->addRow(tr("Товар:"), productCombo);
 
+    nameEdit = new QLineEdit(editGroup);
+    editForm->addRow(tr("Назва:"), nameEdit);
+
+    priceSpin = new QDoubleSpinBox(editGroup);
+    priceSpin->setRange(0, 9999);
+    priceSpin->setDecimals(2);
+    priceSpin->setSuffix(QStringLiteral(" ₴"));
+    editForm->addRow(tr("Ціна:"), priceSpin);
+
+    gpioSpin = new QSpinBox(editGroup);
+    gpioSpin->setRange(1, 14);
+    editForm->addRow(tr("Канал GPIO (1–14):"), gpioSpin);
+
+    // Поле, специфічне для води
+    sparklingLabel = new QLabel(tr("Тип води:"), editGroup);
+    sparklingCheck = new QCheckBox(tr("Газована"), editGroup);
+    editForm->addRow(sparklingLabel, sparklingCheck);
+
+    root->addWidget(editGroup);
+
+    // --- Кнопки ---
     auto *btnRow = new QHBoxLayout();
     auto *saveBtn = new QPushButton(tr("Зберегти"), this);
     auto *cancelBtn = new QPushButton(tr("Скасувати"), this);
@@ -96,62 +106,274 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     btnRow->addWidget(cancelBtn);
     root->addLayout(btnRow);
 
-    connect(saveBtn, &QPushButton::clicked, this, &SettingsWindow::onSave);
-    connect(cancelBtn, &QPushButton::clicked, this, &SettingsWindow::onCancel);
-
-    MachineSettings &cfg = MachineSettings::instance();
+    // --- Початкові значення ---
     freeModeCheck->setChecked(cfg.freeMode());
     coffeeCheck->setChecked(cfg.moduleEnabled(ProductCategory::Coffee));
     waterCheck->setChecked(cfg.moduleEnabled(ProductCategory::Water));
     snacksCheck->setChecked(cfg.moduleEnabled(ProductCategory::Snacks));
-    holdMsSpin->setValue(cfg.buttonHoldMs());
+    holdSecSpin->setValue(cfg.buttonHoldMs() / 1000.0);
 
-  if (!cfg.snackItems().isEmpty()) {
-        const ProductItem &snack = cfg.snackItems().first();
-        snackNameEdit->setText(snack.name);
-        snackPriceSpin->setValue(snack.priceKopiyky / 100.0);
-        snackGpioSpin->setValue(snack.gpioChannel);
-    }
+    // --- Сигнали ---
+    connect(saveBtn, &QPushButton::clicked, this, &SettingsWindow::onSave);
+    connect(cancelBtn, &QPushButton::clicked, this, &SettingsWindow::onCancel);
+    connect(moduleCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &SettingsWindow::onModuleChanged);
+    connect(productCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &SettingsWindow::onProductChanged);
+    connect(countSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, &SettingsWindow::onCountChanged);
+    // Перемикання модулів автомата оновлює список доступних модулів у товарах
+    connect(coffeeCheck, &QCheckBox::toggled, this, &SettingsWindow::onEnabledModulesChanged);
+    connect(waterCheck,  &QCheckBox::toggled, this, &SettingsWindow::onEnabledModulesChanged);
+    connect(snacksCheck, &QCheckBox::toggled, this, &SettingsWindow::onEnabledModulesChanged);
 
-    for (int i = 0; i < coffeeGpioSpins.size() && i < cfg.coffeeItems().size(); ++i)
-        coffeeGpioSpins[i]->setValue(cfg.coffeeItems()[i].gpioChannel);
-    for (int i = 0; i < waterGpioSpins.size() && i < cfg.waterItems().size(); ++i)
-        waterGpioSpins[i]->setValue(cfg.waterItems()[i].gpioChannel);
+    // Перше заповнення: спершу список модулів, потім товари
+    rebuildModuleCombo();
 }
 
-void SettingsWindow::buildGpioRows()
+ProductCategory SettingsWindow::currentCategory() const
 {
-    MachineSettings &cfg = MachineSettings::instance();
-    for (const ProductItem &item : cfg.coffeeItems()) {
-        auto *spin = new QSpinBox(gpioSection);
-        spin->setRange(1, 14);
-        spin->setProperty("label", item.name);
-        coffeeGpioSpins.append(spin);
+    return activeCategory;
+}
+
+QVector<ProductItem> &SettingsWindow::buffer(ProductCategory cat)
+{
+    switch (cat) {
+    case ProductCategory::Coffee: return bufCoffee;
+    case ProductCategory::Water:  return bufWater;
+    case ProductCategory::Snacks: return bufSnack;
     }
-    for (const ProductItem &item : cfg.waterItems()) {
-        auto *spin = new QSpinBox(gpioSection);
-        spin->setRange(1, 14);
-        spin->setProperty("label", item.name);
-        waterGpioSpins.append(spin);
+    return bufSnack;
+}
+
+void SettingsWindow::reloadProductList()
+{
+    const ProductCategory cat = currentCategory();
+    const QVector<ProductItem> &v = buffer(cat);
+
+    // показати поточну кількість товарів модуля, не викликаючи onCountChanged
+    countSpin->blockSignals(true);
+    countSpin->setValue(v.size());
+    countSpin->blockSignals(false);
+
+    productCombo->blockSignals(true);
+    productCombo->clear();
+    for (int i = 0; i < v.size(); ++i)
+        productCombo->addItem(QStringLiteral("%1. %2").arg(i + 1).arg(v[i].name), i);
+
+    currentProductIndex = v.isEmpty() ? -1 : 0;
+    productCombo->setCurrentIndex(currentProductIndex);
+    productCombo->blockSignals(false);
+}
+
+void SettingsWindow::loadProductIntoForm()
+{
+    const ProductCategory cat = currentCategory();
+    const QVector<ProductItem> &v = buffer(cat);
+    if (currentProductIndex < 0 || currentProductIndex >= v.size())
+        return;
+
+    loadingForm = true;
+    const ProductItem &it = v[currentProductIndex];
+    nameEdit->setText(it.name);
+    priceSpin->setValue(it.priceKopiyky / 100.0);
+    gpioSpin->setValue(it.gpioChannel);
+
+    // Поля, специфічні для модуля
+    const bool isWater = (cat == ProductCategory::Water);
+    sparklingLabel->setVisible(isWater);
+    sparklingCheck->setVisible(isWater);
+    if (isWater)
+        sparklingCheck->setChecked(it.sparkling);
+
+    loadingForm = false;
+}
+
+void SettingsWindow::commitFormToBuffer()
+{
+    if (loadingForm)
+        return;
+    const ProductCategory cat = currentCategory();
+    QVector<ProductItem> &v = buffer(cat);
+    if (currentProductIndex < 0 || currentProductIndex >= v.size())
+        return;
+
+    ProductItem &it = v[currentProductIndex];
+    it.name = nameEdit->text().trimmed().isEmpty()
+        ? it.name : nameEdit->text().trimmed();
+    it.priceKopiyky = qRound(priceSpin->value() * 100);
+    it.priceText = QStringLiteral("₴%1").arg(it.priceKopiyky / 100.0, 0, 'f', 2);
+    it.gpioChannel = gpioSpin->value();
+    if (cat == ProductCategory::Water) {
+        it.sparkling = sparklingCheck->isChecked();
+        it.iconPath = it.sparkling
+            ? QStringLiteral(":/Icon/Icon/gaz_water2.svg")
+            : QStringLiteral(":/Icon/Icon/water.svg");
     }
+}
+
+void SettingsWindow::rebuildModuleCombo()
+{
+    // Запам'ятати поточний обраний модуль, щоб за можливості зберегти вибір
+    ProductCategory prev = ProductCategory::Snacks;
+    bool hadSelection = (moduleCombo->count() > 0);
+    if (hadSelection)
+        prev = static_cast<ProductCategory>(moduleCombo->currentData().toInt());
+
+    moduleCombo->blockSignals(true);
+    moduleCombo->clear();
+
+    // Додаємо лише увімкнені модулі (за станом галочок «Модулі автомата»)
+    if (coffeeCheck->isChecked())
+        moduleCombo->addItem(tr("Кава"), static_cast<int>(ProductCategory::Coffee));
+    if (waterCheck->isChecked())
+        moduleCombo->addItem(tr("Вода"), static_cast<int>(ProductCategory::Water));
+    if (snacksCheck->isChecked())
+        moduleCombo->addItem(tr("Снеки"), static_cast<int>(ProductCategory::Snacks));
+
+    // Відновити попередній вибір, якщо він ще доступний
+    int restoreIdx = 0;
+    if (hadSelection) {
+        for (int i = 0; i < moduleCombo->count(); ++i) {
+            if (moduleCombo->itemData(i).toInt() == static_cast<int>(prev)) {
+                restoreIdx = i;
+                break;
+            }
+        }
+    }
+    if (moduleCombo->count() > 0)
+        moduleCombo->setCurrentIndex(restoreIdx);
+
+    moduleCombo->blockSignals(false);
+
+    const int enabledCount = moduleCombo->count();
+
+    // Явно фіксуємо поточну категорію з фактично обраного елемента комбо
+    if (enabledCount > 0)
+        activeCategory = static_cast<ProductCategory>(
+            moduleCombo->itemData(restoreIdx).toInt());
+
+    // Якщо модуль лише один — список вибору зайвий, ховаємо рядок «Модуль»
+    moduleCombo->setVisible(enabledCount > 1);
+    if (moduleLabel)
+        moduleLabel->setVisible(enabledCount > 1);
+
+    // Якщо жоден модуль не ввімкнено — ховаємо всю форму редагування товару
+    if (editGroupBox)
+        editGroupBox->setVisible(enabledCount > 0);
+
+    if (enabledCount > 0) {
+        reloadProductList();
+        loadProductIntoForm();
+    }
+}
+
+void SettingsWindow::onEnabledModulesChanged()
+{
+    // зберегти поточний товар, бо комбо зараз перебудується
+    commitFormToBuffer();
+    rebuildModuleCombo();
+}
+
+void SettingsWindow::onCountChanged(int newCount)
+{
+    if (loadingForm)
+        return;
+    // зберегти поточний товар перед зміною розміру
+    commitFormToBuffer();
+
+    const ProductCategory cat = currentCategory();
+    QVector<ProductItem> &v = buffer(cat);
+    newCount = qBound(1, newCount, 50);
+    if (newCount == v.size())
+        return;
+
+    if (newCount < v.size()) {
+        v.resize(newCount);
+    } else {
+        for (int i = v.size(); i < newCount; ++i)
+            v.append(makeBufferDefault(cat, i));
+    }
+
+    reloadProductList();
+    loadProductIntoForm();
+}
+
+ProductItem SettingsWindow::makeBufferDefault(ProductCategory cat, int index) const
+{
+    ProductItem it;
+    it.gpioChannel = (index % 14) + 1;
+    switch (cat) {
+    case ProductCategory::Coffee:
+        it.name = tr("Кава %1").arg(index + 1);
+        it.priceKopiyky = 1500;
+        it.iconPath = QStringLiteral(":/Icon/Icon/coffee.svg");
+        break;
+    case ProductCategory::Water:
+        it.name = tr("Вода %1").arg(index + 1);
+        it.priceKopiyky = 1000;
+        it.iconPath = QStringLiteral(":/Icon/Icon/water.svg");
+        break;
+    case ProductCategory::Snacks:
+        it.name = tr("Снек %1").arg(index + 1);
+        it.priceKopiyky = 2000;
+        it.iconPath = QStringLiteral(":/Icon/Icon/snack.svg");
+        break;
+    }
+    it.priceText = QStringLiteral("₴%1").arg(it.priceKopiyky / 100.0, 0, 'f', 2);
+    return it;
+}
+
+void SettingsWindow::onModuleChanged(int comboIndex)
+{
+    // зберегти поточний товар у СТАРУ категорію перед перемиканням
+    commitFormToBuffer();
+    // оновити активну категорію з нового вибору комбо
+    if (comboIndex >= 0 && comboIndex < moduleCombo->count())
+        activeCategory = static_cast<ProductCategory>(
+            moduleCombo->itemData(comboIndex).toInt());
+    reloadProductList();
+    loadProductIntoForm();
+}
+
+void SettingsWindow::onProductChanged(int comboIndex)
+{
+    // зберегти попередній товар
+    commitFormToBuffer();
+    currentProductIndex = comboIndex;
+    loadProductIntoForm();
 }
 
 void SettingsWindow::onSave()
 {
+    // зафіксувати останні зміни форми
+    commitFormToBuffer();
+
     MachineSettings &cfg = MachineSettings::instance();
     cfg.setFreeMode(freeModeCheck->isChecked());
     cfg.setModuleEnabled(ProductCategory::Coffee, coffeeCheck->isChecked());
     cfg.setModuleEnabled(ProductCategory::Water, waterCheck->isChecked());
     cfg.setModuleEnabled(ProductCategory::Snacks, snacksCheck->isChecked());
-    cfg.setButtonHoldMs(holdMsSpin->value());
-    cfg.setSnackDisplayName(snackNameEdit->text().trimmed());
-    cfg.setSnackPriceKopiyky(qRound(snackPriceSpin->value() * 100));
-    cfg.setSnackGpio(snackGpioSpin->value());
+    cfg.setButtonHoldMs(qRound(holdSecSpin->value() * 1000));
 
-    for (int i = 0; i < coffeeGpioSpins.size(); ++i)
-        cfg.setCoffeeGpio(i, coffeeGpioSpins[i]->value());
-    for (int i = 0; i < waterGpioSpins.size(); ++i)
-        cfg.setWaterGpio(i, waterGpioSpins[i]->value());
+    // Переносимо весь буфер у MachineSettings
+    const struct { ProductCategory cat; const QVector<ProductItem> *buf; } sets[] = {
+        { ProductCategory::Coffee, &bufCoffee },
+        { ProductCategory::Water,  &bufWater  },
+        { ProductCategory::Snacks, &bufSnack  },
+    };
+    for (const auto &s : sets) {
+        // спершу підганяємо кількість товарів у MachineSettings під буфер
+        cfg.resizeCategory(s.cat, s.buf->size());
+        for (int i = 0; i < s.buf->size(); ++i) {
+            const ProductItem &it = s.buf->at(i);
+            cfg.setItemName(s.cat, i, it.name);
+            cfg.setItemPriceKopiyky(s.cat, i, it.priceKopiyky);
+            cfg.setItemGpio(s.cat, i, it.gpioChannel);
+            if (s.cat == ProductCategory::Water)
+                cfg.setItemSparkling(s.cat, i, it.sparkling);
+        }
+    }
 
     cfg.save();
     emit settingsApplied();

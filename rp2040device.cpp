@@ -6,6 +6,8 @@ constexpr char kStartByte = char(0xAA);
 constexpr char kEndByte = char(0x55);
 constexpr char kAckOk = char(0xBB);
 constexpr char kAckErr = char(0xEE);
+constexpr unsigned char kBtnDown = 0xC1;  // сервісна кнопка натиснута
+constexpr unsigned char kBtnUp   = 0xC0;  // сервісна кнопка відпущена
 }
 
 RP2040Device::RP2040Device(QObject *parent)
@@ -42,6 +44,16 @@ void RP2040Device::sendMessage(const QByteArray &msg)
     }
 }
 
+void RP2040Device::requestSettingsButtonState()
+{
+    // Надсилаємо запит 0xA0 — плата відповість маркером BTN_DOWN/BTN_UP.
+    // Потрібно при підключенні, щоб дізнатися стан кнопки, навіть якщо її
+    // вже тримають з моменту старту.
+    QByteArray q;
+    q.append(char(0xA0));
+    sendMessage(q);
+}
+
 RP2040Device::DispenseResult RP2040Device::sendDispenseCommand(int gpioChannel,
                                                                int holdMs,
                                                                int timeoutMs)
@@ -51,6 +63,11 @@ RP2040Device::DispenseResult RP2040Device::sendDispenseCommand(int gpioChannel,
 
     gpioChannel = qBound(1, gpioChannel, 14);
     holdMs = qBound(100, holdMs, 30000);
+
+    // Таймаут має бути більшим за час утримання виходу: навіть якщо плата
+    // надішле підтвердження вже після завершення видачі, Qt має дочекатись.
+    // Беремо щонайбільше з переданого timeoutMs та (holdMs + 3000 мс запасу).
+    const int effectiveTimeout = qMax(timeoutMs, holdMs + 3000);
 
     QByteArray packet;
     packet.append(kStartByte);
@@ -67,7 +84,7 @@ RP2040Device::DispenseResult RP2040Device::sendDispenseCommand(int gpioChannel,
     ackLoop = &loop;
 
     QObject::connect(ackTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
-    ackTimer->start(timeoutMs);
+    ackTimer->start(effectiveTimeout);
 
     sendMessage(packet);
 
@@ -87,8 +104,20 @@ void RP2040Device::readData()
     emit messageReceived(data);
     qDebug() << "Received from RP2040:" << data.toHex();
 
-    if (!data.isEmpty())
-        appendRx(data);
+    if (data.isEmpty())
+        return;
+
+    // Вибираємо маркери стану сервісної кнопки (GPIO15) — вони можуть
+    // приходити будь-коли, незалежно від видачі.
+    for (char b : data) {
+        const unsigned char ub = static_cast<unsigned char>(b);
+        if (ub == kBtnDown)
+            emit settingsButtonChanged(true);
+        else if (ub == kBtnUp)
+            emit settingsButtonChanged(false);
+    }
+
+    appendRx(data);
 }
 
 void RP2040Device::appendRx(const QByteArray &data)

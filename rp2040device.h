@@ -24,9 +24,13 @@ public:
 
     DispenseResult sendDispenseCommand(int gpioChannel, int holdMs, int timeoutMs = 5000);
 
+    // Запитати поточний стан сервісної кнопки GPIO15 (плата відповість маркером).
+    void requestSettingsButtonState();
+
 signals:
     void messageReceived(const QByteArray &msg);
     void dispenseFinished(RP2040Device::DispenseResult result);
+    void settingsButtonChanged(bool pressed);  // GPIO15: натиснуто/відпущено
 
 private slots:
     void readData();

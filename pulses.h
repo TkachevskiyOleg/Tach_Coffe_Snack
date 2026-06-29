@@ -12,6 +12,9 @@ public:
     bool deduct(int price);
     void resetBalance();
 
+    // Поповнення балансу від купюрника (MDB) — додає суму в копійках.
+    void addKopiyky(int kopiyky);
+
 signals:
     void moneyUpdated(int balance);
 

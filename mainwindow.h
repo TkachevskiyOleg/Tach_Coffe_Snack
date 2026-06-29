@@ -5,6 +5,7 @@
 #include "rp2040device.h"
 #include "pulses.h"
 #include "gpio_listener.h"
+#include "Billvalidator.h"
 #include "machinesettings.h"
 #include <QToolButton>
 #include <QLabel>
@@ -21,6 +22,9 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
+protected:
+    void resizeEvent(QResizeEvent *event) override;
+
 private slots:
     void onSettingsApplied();
     void applyMachineSettings();
@@ -35,7 +39,7 @@ private:
 
     struct CategoryGridState {
         QWidget *page = nullptr;
-        QVector<GridSlot> slots;
+        QVector<GridSlot> cells;
         QVector<ProductItem> items;
         int currentPage = 0;
     };
@@ -47,6 +51,8 @@ private:
     void pageDown();
     void rebuildAllCategoryPages();
     void handleProductClick(const ProductItem &item);
+    void setProductsEnabled(bool enabled);   // блокує/розблоковує кнопки товарів
+    void updateProductIconSizes();           // масштабує іконки під розмір комірок
     void switchCategory(ProductCategory category);
     void updateModuleButtons();
     void setActiveModuleButton(QToolButton *active);
@@ -57,6 +63,7 @@ private:
     RP2040Device *device;
     Pulses *coinLogic;
     GpioListener *listener;
+    BillValidator *billValidator = nullptr;
 
     QLabel *balanceLabel = nullptr;
     QLabel *statusLabel = nullptr;
@@ -68,6 +75,7 @@ private:
     QToolButton *snackBtn = nullptr;
     QToolButton *pageUpBtn = nullptr;
     QToolButton *pageDownBtn = nullptr;
+    QToolButton *m_settingsBtn = nullptr;   // кнопка налаштувань (видима лише при GPIO15)
 
     CategoryGridState m_coffeeGrid;
     CategoryGridState m_waterGrid;
@@ -77,6 +85,9 @@ private:
     static constexpr int gridColumns = 3;
 
     ProductCategory currentCategory = ProductCategory::Snacks;
+
+    // true, поки триває видача товару — блокує паралельні видачі
+    bool m_dispensing = false;
 };
 
 #endif // MAINWINDOW_H
