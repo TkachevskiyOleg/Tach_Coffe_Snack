@@ -1,4 +1,4 @@
-﻿#include "mainwindow.h"
+#include "mainwindow.h"
 #include <QGridLayout>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -56,6 +56,18 @@ static QToolButton *makeModuleButton(const QString &text, const QString &iconPat
     btn->setFixedSize(110, 88);
     btn->setStyle(new CustomToolButtonStyle(5, 0));
     btn->setCheckable(true);
+
+    // Коли кнопку ховаємо через setVisible(false) (модуль вимкнено в
+    // налаштуваннях), вона за замовчуванням перестає займати місце в
+    // layout — через це leftBox звужується/розширюється і центральний
+    // блок зі стрілками (pageUpBtn/pageDownBtn) "стрибає" вбік.
+    // retainSizeWhenHidden змушує layout завжди резервувати під неї
+    // місце, навіть коли вона невидима — геометрія панелі лишається
+    // стабільною.
+    QSizePolicy sp = btn->sizePolicy();
+    sp.setRetainSizeWhenHidden(true);
+    btn->setSizePolicy(sp);
+
     return btn;
 }
 
@@ -130,6 +142,14 @@ void MainWindow::setupBottomTaskbar(QWidget *central)
     m_settingsBtn->setFixedSize(120, 88);
     m_settingsBtn->setStyle(new CustomToolButtonStyle(5, 0));
     m_settingsBtn->setVisible(false);
+
+    // Та сама причина, що й для кнопок модулів вище: кнопка налаштувань
+    // ховається/показується залежно від стану GPIO15, і без цього
+    // rightBox теж би змінював ширину й зміщував стрілки гортання.
+    QSizePolicy spSettings = m_settingsBtn->sizePolicy();
+    spSettings.setRetainSizeWhenHidden(true);
+    m_settingsBtn->setSizePolicy(spSettings);
+
     connect(m_settingsBtn, &QToolButton::clicked, this, [this]() {
         auto *settingsWin = new SettingsWindow(this);
         connect(settingsWin, &SettingsWindow::settingsApplied,
@@ -220,7 +240,34 @@ MainWindow::MainWindow(QWidget *parent)
                     m_settingsBtn->setVisible(pressed);
             }, Qt::QueuedConnection);
 
+    // Коли плата відключається (фізично висмикнули кабель, помилка порту
+    // тощо) — повідомляємо в статус-рядок. Сам перезапуск пошуку нічого
+    // спеціального тут не потребує: m_deviceScanTimer і так працює постійно
+    // у фоні й сам підхопить плату, щойно вона знову з'явиться в системі.
+    connect(device, &RP2040Device::disconnected, this, [this]() {
+        if (statusLabel)
+            statusLabel->setText(tr("Плата розширення відключена — очікую підключення…"));
+    }, Qt::QueuedConnection);
+
     rebuildAllCategoryPages();
+
+    // Раніше плату шукали один-єдиний раз тут-таки в конструкторі: якщо її
+    // не було на старті (або кабель пізніше висмикнули й встромили назад),
+    // додаток про неї більше не дізнавався. Тепер замість одноразового
+    // пошуку — таймер, що раз на 2 секунди перевіряє наявність плати й сам
+    // підключається/перепідключається, коли вона з'являється.
+    m_deviceScanTimer = new QTimer(this);
+    connect(m_deviceScanTimer, &QTimer::timeout, this, &MainWindow::tryConnectDevice);
+    m_deviceScanTimer->start(2000);
+    tryConnectDevice();   // спробувати одразу, не чекаючи першого тіку таймера
+
+    applyMachineSettings();
+}
+
+void MainWindow::tryConnectDevice()
+{
+    if (device->isConnected())
+        return;   // вже підключені — нема чого шукати
 
     for (const QSerialPortInfo &info : QSerialPortInfo::availablePorts()) {
         if (info.vendorIdentifier() == 0x2e8a) {
@@ -233,8 +280,6 @@ MainWindow::MainWindow(QWidget *parent)
             break;
         }
     }
-
-    applyMachineSettings();
 }
 
 MainWindow::~MainWindow()

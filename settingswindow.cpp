@@ -50,17 +50,6 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     modulesLayout->addWidget(snacksCheck);
     root->addWidget(modulesGroup);
 
-    // --- Загальні параметри плати ---
-    auto *commonGroup = new QGroupBox(tr("Загальні параметри"), this);
-    auto *commonForm = new QFormLayout(commonGroup);
-    holdSecSpin = new QDoubleSpinBox(commonGroup);
-    holdSecSpin->setRange(0.1, 30.0);
-    holdSecSpin->setDecimals(1);
-    holdSecSpin->setSingleStep(0.5);
-    holdSecSpin->setSuffix(QStringLiteral(" с"));
-    commonForm->addRow(tr("Час утримання виходу:"), holdSecSpin);
-    root->addWidget(commonGroup);
-
     // --- Редагування товару ---
     auto *editGroup = new QGroupBox(tr("Налаштування товару"), this);
     editGroupBox = editGroup;
@@ -119,7 +108,6 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     coffeeCheck->setChecked(cfg.moduleEnabled(ProductCategory::Coffee));
     waterCheck->setChecked(cfg.moduleEnabled(ProductCategory::Water));
     snacksCheck->setChecked(cfg.moduleEnabled(ProductCategory::Snacks));
-    holdSecSpin->setValue(cfg.buttonHoldMs() / 1000.0);
 
     // --- Сигнали ---
     connect(saveBtn, &QPushButton::clicked, this, &SettingsWindow::onSave);
@@ -371,7 +359,6 @@ void SettingsWindow::onSave()
     cfg.setModuleEnabled(ProductCategory::Coffee, coffeeCheck->isChecked());
     cfg.setModuleEnabled(ProductCategory::Water, waterCheck->isChecked());
     cfg.setModuleEnabled(ProductCategory::Snacks, snacksCheck->isChecked());
-    cfg.setButtonHoldMs(qRound(holdSecSpin->value() * 1000));
 
     // Переносимо весь буфер у MachineSettings
     const struct { ProductCategory cat; const QVector<ProductItem> *buf; } sets[] = {
@@ -387,6 +374,7 @@ void SettingsWindow::onSave()
             cfg.setItemName(s.cat, i, it.name);
             cfg.setItemPriceKopiyky(s.cat, i, it.priceKopiyky);
             cfg.setItemGpio(s.cat, i, it.gpioChannel);
+            cfg.setItemHoldMs(s.cat, i, it.holdMs);
             if (s.cat == ProductCategory::Water)
                 cfg.setItemSparkling(s.cat, i, it.sparkling);
         }

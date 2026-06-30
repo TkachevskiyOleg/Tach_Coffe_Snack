@@ -14,6 +14,8 @@
 #include <QVector>
 #include <QFrame>
 
+class QTimer;
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -28,6 +30,12 @@ protected:
 private slots:
     void onSettingsApplied();
     void applyMachineSettings();
+    // Періодична спроба знайти й (пере)підключити плату розширення RP2040.
+    // Раніше підключення відбувалось лише один раз у конструкторі — якщо
+    // USB-кабель фізично від'єднували й під'єднували назад, додаток про це
+    // більше ніколи не дізнавався. Тепер таймер регулярно перевіряє наявність
+    // плати й сам відновлює зв'язок, щойно вона знову з'являється в системі.
+    void tryConnectDevice();
 
 private:
     struct GridSlot {
@@ -64,6 +72,7 @@ private:
     Pulses *coinLogic;
     GpioListener *listener;
     BillValidator *billValidator = nullptr;
+    QTimer *m_deviceScanTimer = nullptr;  // періодичний пошук/перепідключення плати RP2040
 
     QLabel *balanceLabel = nullptr;
     QLabel *statusLabel = nullptr;

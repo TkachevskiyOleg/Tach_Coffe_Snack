@@ -1,4 +1,4 @@
-#include "rp2040device.h"
+﻿#include "rp2040device.h"
 #include <QDebug>
 
 namespace {
@@ -15,6 +15,16 @@ RP2040Device::RP2040Device(QObject *parent)
 {
     ackTimer = new QTimer(this);
     ackTimer->setSingleShot(true);
+
+    // Підключаємо сигнали ОДИН РАЗ тут, а не всередині connect(): об'єкт
+    // serial живе протягом усього часу роботи додатка й лише перевідкривається
+    // на новому порту при перепідключенні плати. Якби ці connect() були в
+    // методі connect(), кожне перепідключення додавало б ще один дублікат
+    // з'єднання сигналу — readData() викликався б по кілька разів на подію.
+    QObject::connect(&serial, &QSerialPort::readyRead,
+                     this, &RP2040Device::readData);
+    QObject::connect(&serial, &QSerialPort::errorOccurred,
+                     this, &RP2040Device::handleSerialError);
 }
 
 bool RP2040Device::connect(const QString &portName, int baudRate)
@@ -23,14 +33,38 @@ bool RP2040Device::connect(const QString &portName, int baudRate)
     serial.setBaudRate(baudRate);
 
     if (serial.open(QIODevice::ReadWrite)) {
-        QObject::connect(&serial, &QSerialPort::readyRead,
-                         this, &RP2040Device::readData);
         qDebug() << "Connected to RP2040 on" << portName;
         return true;
     }
 
     qDebug() << "Failed to open port" << portName;
     return false;
+}
+
+void RP2040Device::handleSerialError(QSerialPort::SerialPortError error)
+{
+    if (error == QSerialPort::NoError)
+        return;
+
+    // Будь-яка помилка порту (найчастіше ResourceError — фізичне
+    // відключення кабелю) означає, що зв'язок із платою втрачено.
+    // Закриваємо порт явно: isConnected() одразу почне повертати false,
+    // і MainWindow зможе періодично пробувати знайти й підключити плату
+    // знову, щойно вона з'явиться в системі.
+    qDebug() << "RP2040 помилка порту:" << error << serial.errorString();
+    if (serial.isOpen())
+        serial.close();
+
+    // Якщо саме в цей момент очікували ACK на команду видачі — не лишаємо
+    // handleProductClick() вічно чекати на нездійсненну подію.
+    if (waitingAck) {
+        lastResult = DispenseResult::PortClosed;
+        waitingAck = false;
+        if (ackLoop)
+            ackLoop->quit();
+    }
+
+    emit disconnected();
 }
 
 void RP2040Device::sendMessage(const QByteArray &msg)
