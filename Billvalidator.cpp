@@ -1,4 +1,4 @@
-#include "Billvalidator.h"
+﻿#include "Billvalidator.h"
 
 #include <QDebug>
 #include <QElapsedTimer>
@@ -43,6 +43,8 @@ constexpr quint8 ST_ESCROW        = 0x80; // + байт типу купюри
 constexpr quint8 ST_BILL_RETURNED = 0x82;
 constexpr quint8 ST_DROP_CASSETTE_OUT = 0x42;
 constexpr quint8 ST_DROP_CASSETTE_FULL = 0x41;
+// Детальний лог кожного пакета TX/RX. Увімкніть для діагностики зв'язку.
+static constexpr bool kVerbose = true;
 }
 
 BillValidator::BillValidator(const QString &portName, QObject *parent)
@@ -55,7 +57,13 @@ BillValidator::BillValidator(const QString &portName, QObject *parent)
 BillValidator::~BillValidator()
 {
     requestInterruption();
-    wait(2000);
+    // Чекаємо завершення потоку без таймауту-«втечі»: інакше closePort()
+    // міг би закрити fd, поки потік ще читає його → краш. Якщо не встиг за
+    // 3 с — примусово завершуємо, лише потім чіпаємо порт.
+    if (!wait(3000)) {
+        terminate();
+        wait(1000);
+    }
     closePort();
 }
 
@@ -144,10 +152,11 @@ bool BillValidator::sendPacket(const QByteArray &payload)
     pkt.append(static_cast<char>(crc & 0xFF));
     pkt.append(static_cast<char>((crc >> 8) & 0xFF));
 
-    tcflush(m_fd, TCIFLUSH);
+    // Не робимо tcflush перед передачею: він викидав би недочитану відповідь
+    // купюрника й рвав обмін. Покладаємось на структуру пакета (SYNC/LNG/CRC).
     const ssize_t n = ::write(m_fd, pkt.constData(), pkt.size());
     tcdrain(m_fd);
-    qDebug() << "[BV] TX:" << pkt.toHex(' ');
+    if (kVerbose) qDebug() << "[BV] TX:" << pkt.toHex(' ');
     return n == pkt.size();
 }
 
@@ -198,7 +207,7 @@ QByteArray BillValidator::readPacket(int timeoutMs)
         qDebug() << "[BV] RX: (тиша)";
         return empty;
     }
-    qDebug() << "[BV] RX:" << raw.toHex(' ');
+    if (kVerbose) qDebug() << "[BV] RX:" << raw.toHex(' ');
 
     // Розбір: знайти SYNC 0x02, ADR, LNG, тіло, CRC
     int start = raw.indexOf(static_cast<char>(SYNC));
@@ -247,41 +256,106 @@ bool BillValidator::getBillTable()
         return false;
     const QByteArray d = readPacket(400);
     // Таблиця: 24 записи по 5 байтів: [номінал(1)] [код валюти(3)] [знак(1)]
+    qDebug() << "[BV] Bill table RX size =" << d.size() << "bytes";
     if (d.size() < 5) {
-        qDebug() << "[BV] Bill table: коротка відповідь" << d.size();
+        qDebug() << "[BV] Bill table: коротка відповідь" << d.size()
+                 << "— вмикаю запасну маску (усі типи)";
+        // Запас: дозволити всі типи, щоб купюрник хоч приймав. Відсіювання
+        // дрібних тоді робитимемо програмно при зарахуванні.
+        m_enableBits = 0x00FFFFFF;  // усі 24 типи
+        m_ready = true;
+        emit readyChanged(true);
         return false;
     }
+
+    // Номінали (у гривнях), які ДОЗВОЛЯЄМО приймати. Решта (1,2,5,10) — відхиляємо.
+    static const int allowedUah[] = {20, 50, 100, 200, 500, 1000};
+
+    // Скидаємо маску, будемо вмикати лише дозволені біти
+    m_enableBits = 0;
+
     for (int i = 0; i < 24; ++i) {
         const int off = i * 5;
         if (off + 5 > d.size())
             break;
         const quint8 nominal = static_cast<quint8>(d[off]);     // базове число
         const quint8 power   = static_cast<quint8>(d[off + 4]); // множник 10^power
-        // номінал у одиницях валюти = nominal * 10^power
         long value = nominal;
         for (int p = 0; p < power; ++p)
             value *= 10;
-        // у копійки (гривні мають 2 знаки)
         m_billKopiyky[i] = static_cast<int>(value * 100);
+
+        const int uah = static_cast<int>(value);
+
+        // Чи цей номінал у списку дозволених?
+        bool allow = false;
+        for (int a : allowedUah) {
+            if (uah == a) { allow = true; break; }
+        }
+        if (allow && nominal != 0) {
+            // вмикаємо біт i (тип i)
+            m_enableBits |= (1u << i);
+        }
+
+        if (nominal != 0) {
+            // сирі байти запису допоможуть, якщо кодування номіналу інше
+            qDebug() << "[BV] тип" << i
+                     << "raw:" << d.mid(off, 5).toHex(' ')
+                     << "=" << uah << "грн"
+                     << (allow ? "(дозволено)" : "(ВІДХИЛЕНО)");
+        }
     }
+
+    // Захист: якщо жоден біт не виставився (кодування номіналу не таке, як ми
+    // очікували) — не лишаємо порожню маску, вмикаємо всі типи, щоб купюрник
+    // хоч приймав. Тоді номінали видно в логу й ми підправимо розрахунок.
+    if (m_enableBits == 0) {
+        qDebug() << "[BV] УВАГА: маска порожня — вмикаю всі типи (запас)";
+        m_enableBits = 0x00FFFFFF;
+    }
+
+    qDebug() << "[BV] enable bits:" << QString::number(m_enableBits, 16);
+
     m_ready = true;
     emit readyChanged(true);
-    emit statusChanged(tr("Купюрник готовий (таблиця купюр зчитана)"));
+    emit statusChanged(tr("Купюрник готовий (приймає 20–1000 грн)"));
     return true;
 }
 
 bool BillValidator::enableBills(bool enable)
 {
     // Enable Bill Types: 3 байти маски дозволу типів + 3 байти ескроу-маски.
+    // Дозволяємо лише купюри з m_enableBits (20–1000 грн). Якщо вимикаємо —
+    // нульова маска (нічого не приймати).
     QByteArray data;
-    const quint8 e = enable ? 0xFF : 0x00;
-    data.append(char(e)); data.append(char(e)); data.append(char(e)); // enable
-    data.append(char(e)); data.append(char(e)); data.append(char(e)); // escrow
+    if (enable) {
+        // CCNET Enable Bill Types: 3 байти Bill Enable + 3 байти Bill Escrow.
+        // Порядок байтів big-endian: байт0=типи23..16, байт1=типи15..8,
+        // байт2=типи7..0. Саме тому раніше fc стояв не в тому байті, і купюрник
+        // вмикав неіснуючі типи 16-23 → лишався DISABLED.
+        const quint8 b0 = (m_enableBits >> 16) & 0xFF; // типи 16..23
+        const quint8 b1 = (m_enableBits >> 8)  & 0xFF; // типи 8..15
+        const quint8 b2 =  m_enableBits        & 0xFF; // типи 0..7
+        data.append(char(b0));
+        data.append(char(b1));
+        data.append(char(b2));
+        // escrow-маска = enable-масці (тримати ті самі типи в ескроу)
+        data.append(char(b0));
+        data.append(char(b1));
+        data.append(char(b2));
+    } else {
+        for (int i = 0; i < 6; ++i)
+            data.append(char(0x00));
+    }
     if (!sendCmd(CMD_ENABLE_BILL, data))
         return false;
+    // Купюрник відповідає ACK на команду. У CCNET ми МУСИМО підтвердити
+    // його відповідь власним ACK — інакше команда вважається непідтвердженою
+    // і купюрник лишається в UNIT DISABLED.
     readPacket(200);
+    sendAck();
     m_enabled = enable;
-    emit statusChanged(enable ? tr("Прийом купюр увімкнено")
+    emit statusChanged(enable ? tr("Прийом купюр увімкнено (20–1000 грн)")
                               : tr("Прийом купюр вимкнено"));
     return true;
 }
@@ -330,25 +404,41 @@ void BillValidator::pollLoop()
             if (!d.isEmpty()) {
                 // d[0] — код стану; для 0x80/0x81 далі йде d[1] = тип купюри
                 const quint8 st = static_cast<quint8>(d[0]);
+                bool needAck = false;  // ACK шлемо лише на події з даними
 
                 if (st == ST_ESCROW && d.size() >= 2) {
                     const int type = static_cast<quint8>(d[1]);
                     const int kop = billTypeToKopiyky(type);
+                    qDebug() << "[BV] ЕСКРОУ: тип" << type << "=" << kop/100.0 << "грн → STACK";
                     emit billInEscrow(kop);
-                    // автоматично зараховуємо у касету
-                    QMutexLocker lock(&m_mutex);
-                    m_wantStack = true;
+                    { QMutexLocker lock(&m_mutex); m_wantStack = true; }
+                    needAck = true;
                 } else if (st == ST_BILL_STACKED && d.size() >= 2) {
                     const int type = static_cast<quint8>(d[1]);
                     const int kop = billTypeToKopiyky(type);
+                    qDebug() << "[BV] ЗАРАХОВАНО: тип" << type << "=" << kop/100.0 << "грн";
                     emit billAccepted(kop);
                     emit statusChanged(tr("Прийнято купюру: %1 грн")
                                            .arg(kop / 100.0, 0, 'f', 2));
+                    needAck = true;
+                } else if (st == ST_BILL_RETURNED) {
+                    needAck = true;
+                } else if (st == ST_REJECTING && d.size() >= 2) {
+                    qDebug() << "[BV] ВІДХИЛЕНО купюру, причина код:"
+                             << QString::number(static_cast<quint8>(d[1]), 16);
+                    handlePollByte(st);
                 } else {
+                    // рутинні стани (IDLING/DISABLED тощо) НЕ підтверджуємо ACK —
+                    // CCNET очікує ACK лише на події з купюрою. Зайвий ACK після
+                    // кожного статусу деякі купюрники сприймають як збій зв'язку
+                    // й запалюють постійний червоний.
+                    if (st != m_lastPollState)
+                        qDebug() << "[BV] стан:" << QString::number(st, 16);
                     handlePollByte(st);
                 }
-                // підтверджуємо отримання статусу
-                sendAck();
+                m_lastPollState = st;
+                if (needAck)
+                    sendAck();
             }
         }
         QThread::msleep(150);
@@ -361,17 +451,55 @@ void BillValidator::run()
         return;
 
     doReset();
-    QThread::msleep(300);
-
-    // кілька POLL поки купюрник проходить power-up/initialize
-    for (int i = 0; i < 10 && !isInterruptionRequested(); ++i) {
+    QThread::msleep(500);
+    // Після RESET підтверджуємо ACK і даємо купюрнику пройти весь цикл
+    // power-up. Чекаємо, поки стан DISABLED (0x19) стане стабільним
+    // (повторюється підряд) — лише тоді купюрник готовий приймати Enable.
+    int disabledStreak = 0;
+    for (int i = 0; i < 60 && !isInterruptionRequested(); ++i) {
         sendCmd(CMD_POLL);
-        readPacket(200);
+        const QByteArray d = readPacket(200);
+        if (!d.isEmpty()) {
+            const quint8 st = static_cast<quint8>(d[0]);
+            // підтверджуємо отримання статусу — CCNET цього вимагає
+            sendAck();
+            if (st == ST_IDLING) {
+                qDebug() << "[BV] вже IDLING на старті";
+                disabledStreak = 99;
+                break;
+            }
+            if (st == ST_DISABLED) {
+                if (++disabledStreak >= 3) {
+                    qDebug() << "[BV] купюрник стабільно DISABLED — готовий до enable";
+                    break;
+                }
+            } else {
+                disabledStreak = 0; // ще проходить power-up/initialize
+                qDebug() << "[BV] стан під час старту:" << QString::number(st,16);
+            }
+        }
         QThread::msleep(100);
     }
 
-    getBillTable();      // навіть якщо не вийшло — спробуємо далі
-    enableBills(true);
+    getBillTable();      // будує маску дозволених купюр
+
+    // Вмикаємо прийом і ПЕРЕКОНУЄМОСЬ, що купюрник вийшов з DISABLED.
+    // Повторюємо enable кілька разів, доки POLL не покаже IDLING.
+    for (int attempt = 0; attempt < 5 && !isInterruptionRequested(); ++attempt) {
+        enableBills(true);
+        QThread::msleep(150);
+        sendCmd(CMD_POLL);
+        const QByteArray d = readPacket(200);
+        if (!d.isEmpty()) {
+            const quint8 st = static_cast<quint8>(d[0]);
+            qDebug() << "[BV] після enable, стан:" << QString::number(st,16);
+            if (st == ST_IDLING) {
+                qDebug() << "[BV] прийом активовано (IDLING)";
+                break;
+            }
+        }
+        QThread::msleep(200);
+    }
 
     pollLoop();
 

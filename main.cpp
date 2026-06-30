@@ -1,7 +1,25 @@
-#include "mainwindow.h"
+﻿#include "mainwindow.h"
 #include <QApplication>
 #include <QtGlobal>
 #include <cstdio>
+#include <csignal>
+#include <cstdlib>
+#include <execinfo.h>
+#include <unistd.h>
+
+// Обробник аварійних сигналів: при краші (SIGSEGV/SIGABRT) друкує стек викликів,
+// щоб одразу бачити місце падіння без окремого запуску gdb.
+static void crashHandler(int sig)
+{
+    void *frames[64];
+    const int n = backtrace(frames, 64);
+    fprintf(stderr, "\n=== CRASH! сигнал %d, стек викликів: ===\n", sig);
+    backtrace_symbols_fd(frames, n, STDERR_FILENO);
+    fprintf(stderr, "=== кінець стека ===\n");
+    fflush(stderr);
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
 
 // Фільтр повідомлень: глушить нешкідливі попередження плагіна xcb
 // (BadWindow / TranslateCoords), що інколи виникають при відкритті/закритті
@@ -32,6 +50,10 @@ static void messageFilter(QtMsgType type, const QMessageLogContext &context,
 
 int main(int argc, char *argv[])
 {
+    // Перехоплюємо аварійні сигнали для друку стека викликів при краші
+    signal(SIGSEGV, crashHandler);
+    signal(SIGABRT, crashHandler);
+
     qInstallMessageHandler(messageFilter);
 
     QApplication a(argc, argv);

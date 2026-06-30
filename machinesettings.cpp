@@ -1,4 +1,4 @@
-#include "machinesettings.h"
+﻿#include "machinesettings.h"
 #include <QSettings>
 #include <QtGlobal>
 
@@ -46,13 +46,13 @@ void MachineSettings::initDefaults()
     }
 
     m_snackItems.clear();
-    for (int i = 0; i < 50; ++i) {
+    for (int i = 0; i < kOutputCount; ++i) {
         m_snackItems.append({
             QStringLiteral("snack_%1").arg(i + 1),
             QStringLiteral("Снек %1").arg(i + 1),
             QStringLiteral("₴20"),
             2000,
-            (i % 14) + 1,
+            (i % kOutputCount) + 1,
             QStringLiteral(":/Icon/Icon/snack.svg"),
             false,
         });
@@ -172,12 +172,20 @@ void MachineSettings::setItemSparkling(ProductCategory category, int index, bool
     }
 }
 
+void MachineSettings::setItemHoldMs(ProductCategory category, int index, int holdMs)
+{
+    QVector<ProductItem> &v = itemsMutable(category);
+    if (index < 0 || index >= v.size())
+        return;
+    v[index].holdMs = qBound(100, holdMs, 30000);
+}
+
 ProductItem MachineSettings::makeDefaultItem(ProductCategory category, int index) const
 {
     ProductItem it;
     const QString key = QString::fromUtf8(categoryKey(category));
     it.id = QStringLiteral("%1_%2").arg(key).arg(index + 1);
-    it.gpioChannel = (index % 14) + 1;
+    it.gpioChannel = (index % kOutputCount) + 1;
     switch (category) {
     case ProductCategory::Coffee:
         it.name = QStringLiteral("Кава %1").arg(index + 1);
@@ -203,7 +211,9 @@ ProductItem MachineSettings::makeDefaultItem(ProductCategory category, int index
 void MachineSettings::resizeCategory(ProductCategory category, int newCount)
 {
     QVector<ProductItem> &v = itemsMutable(category);
-    newCount = qBound(1, newCount, 50);  // межі: від 1 до 50 товарів
+    // Снеки — не більше за кількість фізичних виходів (по виходу на снек).
+    const int maxCount = (category == ProductCategory::Snacks) ? kOutputCount : 50;
+    newCount = qBound(1, newCount, maxCount);
     if (newCount == v.size())
         return;
     if (newCount < v.size()) {
@@ -221,7 +231,7 @@ void MachineSettings::load()
     // Версія схеми збереження. Якщо у сховищі стара версія (або її немає) —
     // ігноруємо застарілі ключі й беремо дефолти, щоб не підхоплювати сміття
     // від попередніх версій програми (напр. назви, що "переїхали" між модулями).
-    const int SCHEMA_VERSION = 2;
+    const int SCHEMA_VERSION = 3;
     const int storedVersion = s.value(QStringLiteral("schemaVersion"), 0).toInt();
     if (storedVersion < SCHEMA_VERSION) {
         // Стара/відсутня схема — чистимо все й лишаємо дефолти з initDefaults().
@@ -252,6 +262,9 @@ void MachineSettings::load()
             const int kop = s.value(base + QStringLiteral("priceKop"), v[i].priceKopiyky).toInt();
             v[i].priceKopiyky = qMax(0, kop);
             v[i].priceText = priceTextFromKopiyky(v[i].priceKopiyky);
+            // тривалість утримання виходу для цього товару
+            v[i].holdMs = qBound(100,
+                s.value(base + QStringLiteral("holdMs"), v[i].holdMs).toInt(), 30000);
             if (cat == ProductCategory::Water) {
                 v[i].sparkling = s.value(base + QStringLiteral("sparkling"), v[i].sparkling).toBool();
                 v[i].iconPath = v[i].sparkling
@@ -265,7 +278,7 @@ void MachineSettings::load()
 void MachineSettings::save()
 {
     QSettings s(QStringLiteral("Tach"), QStringLiteral("CoffeSnack"));
-    s.setValue(QStringLiteral("schemaVersion"), 2);
+    s.setValue(QStringLiteral("schemaVersion"), 3);
     s.setValue(QStringLiteral("freeMode"), m_freeMode);
     s.setValue(QStringLiteral("coffeeEnabled"), m_coffeeEnabled);
     s.setValue(QStringLiteral("waterEnabled"), m_waterEnabled);
@@ -289,6 +302,7 @@ void MachineSettings::save()
             s.setValue(base + QStringLiteral("name"), v[i].name);
             s.setValue(base + QStringLiteral("gpio"), v[i].gpioChannel);
             s.setValue(base + QStringLiteral("priceKop"), v[i].priceKopiyky);
+            s.setValue(base + QStringLiteral("holdMs"), v[i].holdMs);
             if (cat == ProductCategory::Water)
                 s.setValue(base + QStringLiteral("sparkling"), v[i].sparkling);
         }

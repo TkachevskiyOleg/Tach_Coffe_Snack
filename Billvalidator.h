@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <QThread>
 #include <QByteArray>
@@ -7,7 +7,6 @@
 #include <QString>
 
 // CCNET-master для купюрника CashCode VU(MVU). Адреса купюрника 0x03.
-//
 // CCNET — простий послідовний протокол: UART 9600 8N1 (БЕЗ 9-го біта й parity).
 // Структура пакета:
 //   0x02  [ADR]  [LNG]  [DATA...]  [CRC_LO]  [CRC_HI]
@@ -73,9 +72,14 @@ private:
     bool m_ready = false;
     bool m_enabled = false;
 
+    // Маска дозволених типів купюр (біт i = тип i). Розкладається в байти
+    // у правильному CCNET-порядку при відправці Enable.
+    quint32 m_enableBits = 0;
+
     QMutex m_mutex;
     bool m_wantStack = false;
     bool m_wantReturn = false;
     bool m_wantEnable = true;
     bool m_wantDisable = false;
+    quint8 m_lastPollState = 0xFF;  // для логування лише при зміні стану
 };

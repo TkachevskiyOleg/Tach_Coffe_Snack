@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <QObject>
 #include <map>
 
@@ -12,7 +12,6 @@ public:
     bool deduct(int price);
     void resetBalance();
 
-    // Поповнення балансу від купюрника (MDB) — додає суму в копійках.
     void addKopiyky(int kopiyky);
 
 signals:

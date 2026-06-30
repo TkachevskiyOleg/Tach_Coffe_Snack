@@ -10,23 +10,23 @@ CONFIG += c++17
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
 
 SOURCES += \
-    Billvalidator.cpp \
     gpio_listener.cpp \
     machinesettings.cpp \
     main.cpp \
     mainwindow.cpp \
     pay_price.cpp \
     pulses.cpp \
+    Billvalidator.cpp \
     rp2040device.cpp \
     settingswindow.cpp
 
 HEADERS += \
-    Billvalidator.h \
     gpio_listener.h \
     machinesettings.h \
     mainwindow.h \
     pay_price.h \
     pulses.h \
+    Billvalidator.h \
     rp2040device.h \
     settingswindow.h
 
@@ -47,3 +47,7 @@ RESOURCES += \
     resources.qrc
 
 LIBS += -lgpiod
+
+
+# Для читабельного стека викликів при краші (backtrace)
+QMAKE_LFLAGS += -rdynamic

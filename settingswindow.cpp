@@ -1,4 +1,4 @@
-#include "settingswindow.h"
+﻿#include "settingswindow.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
@@ -90,6 +90,14 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     gpioSpin->setRange(1, 14);
     editForm->addRow(tr("Канал GPIO (1–14):"), gpioSpin);
 
+    // Тривалість роботи виходу саме для цього товару
+    itemHoldSpin = new QDoubleSpinBox(editGroup);
+    itemHoldSpin->setRange(0.1, 30.0);
+    itemHoldSpin->setDecimals(1);
+    itemHoldSpin->setSingleStep(0.5);
+    itemHoldSpin->setSuffix(QStringLiteral(" с"));
+    editForm->addRow(tr("Час видачі товару:"), itemHoldSpin);
+
     // Поле, специфічне для води
     sparklingLabel = new QLabel(tr("Тип води:"), editGroup);
     sparklingCheck = new QCheckBox(tr("Газована"), editGroup);
@@ -151,9 +159,16 @@ void SettingsWindow::reloadProductList()
     const ProductCategory cat = currentCategory();
     const QVector<ProductItem> &v = buffer(cat);
 
+    // Снеки не можуть перевищувати кількість фізичних виходів плати (по одному
+    // виходу на снек). Кава/Вода можуть мати більше позицій (вони на спільних
+    // каналах). Тому для снеків верхня межа = kOutputCount, для решти — 50.
+    const int maxCount = (cat == ProductCategory::Snacks)
+                             ? MachineSettings::kOutputCount : 50;
+
     // показати поточну кількість товарів модуля, не викликаючи onCountChanged
     countSpin->blockSignals(true);
-    countSpin->setValue(v.size());
+    countSpin->setRange(1, maxCount);
+    countSpin->setValue(qMin(v.size(), maxCount));
     countSpin->blockSignals(false);
 
     productCombo->blockSignals(true);
@@ -178,6 +193,7 @@ void SettingsWindow::loadProductIntoForm()
     nameEdit->setText(it.name);
     priceSpin->setValue(it.priceKopiyky / 100.0);
     gpioSpin->setValue(it.gpioChannel);
+    itemHoldSpin->setValue(it.holdMs / 1000.0);
 
     // Поля, специфічні для модуля
     const bool isWater = (cat == ProductCategory::Water);
@@ -204,6 +220,7 @@ void SettingsWindow::commitFormToBuffer()
     it.priceKopiyky = qRound(priceSpin->value() * 100);
     it.priceText = QStringLiteral("₴%1").arg(it.priceKopiyky / 100.0, 0, 'f', 2);
     it.gpioChannel = gpioSpin->value();
+    it.holdMs = qRound(itemHoldSpin->value() * 1000);
     if (cat == ProductCategory::Water) {
         it.sparkling = sparklingCheck->isChecked();
         it.iconPath = it.sparkling

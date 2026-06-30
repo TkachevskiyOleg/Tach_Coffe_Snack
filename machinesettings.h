@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <QObject>
 #include <QString>
@@ -18,6 +18,7 @@ struct ProductItem {
     int gpioChannel = 1;
     QString iconPath;
     bool sparkling = false;   // лише для води: газована/негазована
+    int holdMs = 5000;        // тривалість утримання виходу для цього товару (мс)
 };
 
 class MachineSettings : public QObject {
@@ -47,6 +48,10 @@ public:
     void setItemGpio(ProductCategory category, int index, int gpioChannel);
     void setItemPriceKopiyky(ProductCategory category, int index, int kopiyky);
     void setItemSparkling(ProductCategory category, int index, bool sparkling);
+    void setItemHoldMs(ProductCategory category, int index, int holdMs);
+
+    // Кількість фізичних виходів плати розширення (каналів видачі).
+    static constexpr int kOutputCount = 14;
 
     // Зміна кількості товарів у категорії (1..50)
     void resizeCategory(ProductCategory category, int newCount);

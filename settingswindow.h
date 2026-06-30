@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <QWidget>
 #include <QCheckBox>
@@ -53,6 +53,7 @@ private:
     QLineEdit *nameEdit = nullptr;
     QDoubleSpinBox *priceSpin = nullptr;
     QSpinBox *gpioSpin = nullptr;
+    QDoubleSpinBox *itemHoldSpin = nullptr;   // тривалість виходу для товару
 
     // Залежні від модуля поля
     QLabel *sparklingLabel = nullptr;   // лише для води
